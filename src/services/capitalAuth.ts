@@ -103,7 +103,36 @@ export class CapitalAuthService {
   async getValidTokens(): Promise<SessionTokens> {
     // If we don't have tokens, create a new session
     if (!this.tokens) {
-      return await this.createSession();
+      // On Netlify, check if tokens are cached in sessionStorage to avoid rate limiting
+      if (isNetlify && typeof sessionStorage !== 'undefined') {
+        const cached = sessionStorage.getItem('capital_tokens');
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            const age = Date.now() - (parsed.timestamp || 0);
+            // Use cached tokens if less than 5 minutes old
+            if (age < 5 * 60 * 1000) {
+              console.log('[Auth] Using cached tokens');
+              this.tokens = { cst: parsed.cst, securityToken: parsed.securityToken };
+              return this.tokens;
+            }
+          } catch (e) {
+            console.error('[Auth] Failed to parse cached tokens:', e);
+          }
+        }
+      }
+      
+      const tokens = await this.createSession();
+      
+      // Cache tokens on Netlify to prevent rate limiting
+      if (isNetlify && typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('capital_tokens', JSON.stringify({
+          ...tokens,
+          timestamp: Date.now()
+        }));
+      }
+      
+      return tokens;
     }
     return this.tokens;
   }
