@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital.com Auth Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #1a1a1a;
+            color: #00ff00;
+            padding: 20px;
+        }
+        .log {
+            background: #000;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+        }
+        button {
+            background: #00ff00;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        button:hover {
+            background: #00cc00;
+        }
+        .error {
+            color: #ff0000;
+        }
+        .success {
+            color: #00ff00;
+        }
+    </style>
+</head>
+<body>
+    <h1>Capital.com Authentication Test</h1>
+    
+    <div class="log">
+        <strong>Environment:</strong>
+        <div id="env-info"></div>
+    </div>
+
+    <button onclick="testAuth()">Test Authentication</button>
+    
+    <div class="log">
+        <strong>Logs:</strong>
+        <div id="logs"></div>
+    </div>
+
+    <script>
+        // Display environment info
+        const envInfo = document.getElementById('env-info');
+        const isNetlify = window.location.hostname.includes('netlify.app') || 
+                          window.location.hostname.includes('netlify.live');
+        
+        envInfo.innerHTML = `
+            <div>Hostname: ${window.location.hostname}</div>
+            <div>Is Netlify: ${isNetlify}</div>
+            <div>Function URL: ${isNetlify ? '/.netlify/functions/capital-auth' : 'N/A (localhost)'}</div>
+        `;
+
+        function log(message, isError = false) {
+            const logs = document.getElementById('logs');
+            const div = document.createElement('div');
+            div.className = isError ? 'error' : 'success';
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logs.appendChild(div);
+        }
+
+        async function testAuth() {
+            const logs = document.getElementById('logs');
+            logs.innerHTML = '';
+            
+            log('Starting authentication test...');
+            
+            try {
+                log('Fetching from: /.netlify/functions/capital-auth');
+                
+                const response = await fetch('/.netlify/functions/capital-auth', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
+
+                log(`Response status: ${response.status}`);
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    log(`Error: ${JSON.stringify(data, null, 2)}`, true);
+                    return;
+                }
+                
+                log('✓ Authentication successful!');
+                log(`CST: ${data.cst ? '✓ Received' : '✗ Missing'}`);
+                log(`Security Token: ${data.securityToken ? '✓ Received' : '✗ Missing'}`);
+                
+            } catch (error) {
+                log(`Exception: ${error.message}`, true);
+                log(`Stack: ${error.stack}`, true);
+            }
+        }
+    </script>
+</body>
+</html>
