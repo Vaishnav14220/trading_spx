@@ -492,6 +492,7 @@ const App: React.FC = () => {
             ) : (
               stockData.length > 0 && (
                 <StockChart 
+                  key={`chart-${showTodayOnly}-${selectedDate}-${filteredTrades.length}`}
                   data={stockData} 
                   symbol="SPX" 
                   trades={filteredTrades}
