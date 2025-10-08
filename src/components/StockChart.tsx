@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ISeriesApi, LineStyle, IChartApi } from 'lightweight-charts';
 import { StockChartProps } from '../types/chart';
-import { LineChart, BarChart2, Maximize2, Minimize2, TrendingUp, Activity, Tag, TagOff } from 'lucide-react';
+import { LineChart, BarChart2, Maximize2, Minimize2, TrendingUp, Activity, Tag, Tags } from 'lucide-react';
 import { OptionTrade } from '../types/options';
 
 const DELTA_THRESHOLD = 0.64;
@@ -420,9 +420,9 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
             title="Toggle line labels"
           >
             {showLabels ? (
-              <Tag className="h-4 w-4" />
+              <Tags className="h-4 w-4" />
             ) : (
-              <TagOff className="h-4 w-4" />
+              <Tag className="h-4 w-4" />
             )}
           </button>
           <button
