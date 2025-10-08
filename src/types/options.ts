@@ -12,6 +12,7 @@ export interface OptionTrade {
   strike: number;
   breakeven: number;
   absDelta: number;
+  isTimeOnly?: boolean; // True if original timestamp was just time (no date)
 }
 
 export interface OptionsSummary {

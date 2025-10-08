@@ -18,7 +18,7 @@ export function parseOptionsData(data: string): ParsedOptionData {
     const fields = line.trim().split('\t');
     
     // Parse and normalize timestamp
-    const timestamp = parseTimestamp(fields[0]);
+    const { timestamp, isTimeOnly } = parseTimestamp(fields[0]);
     
     // Extract contract details
     const contractParts = fields[1].split(' ');
@@ -58,7 +58,8 @@ export function parseOptionsData(data: string): ParsedOptionData {
       underlyingPrice: parseFloat(fields[8]),
       type,
       strike,
-      breakeven
+      breakeven,
+      isTimeOnly // Track if this was a time-only timestamp
     };
     
     // Only add valid trades

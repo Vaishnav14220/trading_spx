@@ -64,7 +64,8 @@ const App: React.FC = () => {
   // Filter trades based on selected date and today filter
   const filteredTrades = React.useMemo(() => {
     if (showTodayOnly) {
-      return optionsData.trades.filter(trade => isToday(trade.timestamp));
+      // Show only trades that had time-only timestamps (no date in original data)
+      return optionsData.trades.filter(trade => trade.isTimeOnly === true);
     }
     
     if (selectedDate === 'all') return optionsData.trades;
