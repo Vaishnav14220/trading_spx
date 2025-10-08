@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ISeriesApi, LineStyle, IChartApi } from 'lightweight-charts';
 import { StockChartProps } from '../types/chart';
-import { LineChart, BarChart2, Maximize2, Minimize2, TrendingUp, Activity } from 'lucide-react';
+import { LineChart, BarChart2, Maximize2, Minimize2, TrendingUp, Activity, Tag, TagOff } from 'lucide-react';
 import { OptionTrade } from '../types/options';
 
 const DELTA_THRESHOLD = 0.64;
@@ -28,6 +28,7 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
   const [currentType, setCurrentType] = useState(chartType);
   const [isMaximized, setIsMaximized] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
   const breakevenLinesRef = useRef<ISeriesApi<"Line">[]>([]);
 
   const toggleChartType = () => {
@@ -174,11 +175,17 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
       const displayLevel = roundFigures ? level.toFixed(0) : level.toFixed(2);
       const futuresLevel = roundFigures ? (level + futuresSpread).toFixed(0) : (level + futuresSpread).toFixed(2);
       const futuresAdjustedPrice = futuresSpread > 0 ? ` [$${futuresLevel}]` : '';
+      
+      // Only show title/label if showLabels is true
+      const lineTitle = showLabels 
+        ? `${direction === 'above' ? '▲' : '▼'} $${displayLevel}${futuresAdjustedPrice} ($${Math.abs(totalPremium / 1_000_000).toFixed(1)}M)`
+        : '';
+      
       const line = chart.addLineSeries({
         color: direction === 'above' ? '#22C55E' : '#EF4444',
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
-        title: `${direction === 'above' ? '▲' : '▼'} $${displayLevel}${futuresAdjustedPrice} ($${Math.abs(totalPremium / 1_000_000).toFixed(1)}M)`,
+        title: lineTitle,
       });
 
       line.setData(data.map(d => ({
@@ -336,7 +343,7 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
     
     // Don't auto-scroll - let user control the view
     // chartRef.current.timeScale().fitContent();
-  }, [data, trades, currentType, showVolume, futuresSpread, roundFigures]);
+  }, [data, trades, currentType, showVolume, futuresSpread, roundFigures, showLabels]);
 
   // Don't auto-scroll when new data arrives - keep the current view stable
   // useEffect(() => {
@@ -402,6 +409,21 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
             title="Toggle volume"
           >
             <Activity className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setShowLabels(!showLabels)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-md transition-colors ${
+              showLabels 
+                ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+            }`}
+            title="Toggle line labels"
+          >
+            {showLabels ? (
+              <Tag className="h-4 w-4" />
+            ) : (
+              <TagOff className="h-4 w-4" />
+            )}
           </button>
           <button
             onClick={toggleMaximize}
