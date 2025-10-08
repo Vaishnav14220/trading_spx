@@ -11,6 +11,8 @@ const MID_DELTA_RANGE = { min: 0.50, max: 0.60 };
 interface SentimentAnalysisProps {
   trades: OptionTrade[];
   currentPrice?: number;
+  futuresSpread?: number;
+  roundFigures?: boolean;
 }
 
 interface BreakevenSentiment {
@@ -29,7 +31,7 @@ interface AggregatedSentiment {
 type SortField = 'level' | 'premium' | 'distance';
 type SortDirection = 'asc' | 'desc';
 
-const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPrice = 0 }) => {
+const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPrice = 0, futuresSpread = 0, roundFigures = false }) => {
   const [sortField, setSortField] = useState<SortField>('distance');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [selectedBreakeven, setSelectedBreakeven] = useState<number | null>(null);
@@ -57,9 +59,12 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
       const midPrice = (bid + ask) / 2;
       const isBuy = trade.price >= midPrice;
       const direction = (trade.type === 'C' && isBuy) || (trade.type === 'P' && !isBuy) ? 'above' : 'below';
-      const distance = trade.breakeven - currentPrice;
       
-      const existingSentiment = acc.find(s => s.level === trade.breakeven);
+      // Round breakeven if roundFigures is enabled
+      const breakevenLevel = roundFigures ? Math.round(trade.breakeven) : trade.breakeven;
+      const distance = breakevenLevel - currentPrice;
+      
+      const existingSentiment = acc.find(s => s.level === breakevenLevel);
       const premium = trade.price * trade.quantity * 100;
       
       if (existingSentiment) {
@@ -67,7 +72,7 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
         existingSentiment.trades.push(trade);
       } else {
         acc.push({
-          level: trade.breakeven,
+          level: breakevenLevel,
           totalPremium: premium,
           direction,
           trades: [trade],
@@ -90,20 +95,36 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
 
     let signal = null;
     if (nearestSignificant) {
-      const nextLevel = sortedByPremium.find(level => 
-        nearestSignificant.direction === 'above' ? 
-          level.level > nearestSignificant.level : 
-          level.level < nearestSignificant.level
+      // Determine trade direction
+      const tradeDirection = nearestSignificant.direction === 'above' ? 'BUY' : 'SELL';
+      
+      // Get all levels in the direction of the trade
+      const levelsInDirection = breakevens.filter(level => 
+        tradeDirection === 'BUY' ? 
+          level.level > currentPrice : 
+          level.level < currentPrice
       );
+      
+      // Sort by premium (highest first)
+      const sortedByPremiumInDirection = levelsInDirection.sort((a, b) => 
+        Math.abs(b.totalPremium) - Math.abs(a.totalPremium)
+      );
+      
+      // Target is the level with highest premium
+      const target = sortedByPremiumInDirection[0];
+      // Next target is the level with second highest premium
+      const nextTarget = sortedByPremiumInDirection[1];
 
-      signal = {
-        action: nearestSignificant.direction === 'above' ? 'BUY' : 'SELL',
-        entry: currentPrice,
-        target: nearestSignificant.level,
-        nextTarget: nextLevel?.level,
-        points: Math.abs(nearestSignificant.distance),
-        premium: nearestSignificant.totalPremium
-      };
+      if (target) {
+        signal = {
+          action: tradeDirection,
+          entry: currentPrice,
+          target: target.level,
+          nextTarget: nextTarget?.level,
+          points: Math.abs(target.level - currentPrice),
+          premium: target.totalPremium
+        };
+      }
     }
 
     const sortedSentiments = breakevens.sort((a, b) => {
@@ -120,7 +141,7 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
     });
 
     return { sentiments: sortedSentiments, signal };
-  }, [trades, currentPrice, sortField, sortDirection]);
+  }, [trades, currentPrice, sortField, sortDirection, roundFigures]);
 
   const handleTradesClick = (breakeven: number) => {
     setSelectedBreakeven(breakeven);
@@ -280,20 +301,35 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
                 <div>
                   <div className="text-gray-400">Entry</div>
                   <div className="font-mono font-bold text-white">
-                    ${signal.entry.toFixed(2)}
+                    ${roundFigures ? signal.entry.toFixed(0) : signal.entry.toFixed(2)}
+                    {futuresSpread > 0 && (
+                      <div className="text-blue-400 text-xs mt-1">
+                        [${roundFigures ? (signal.entry + futuresSpread).toFixed(0) : (signal.entry + futuresSpread).toFixed(2)}]
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div>
                   <div className="text-gray-400">Target</div>
                   <div className="font-mono font-bold text-white">
-                    ${signal.target.toFixed(2)}
+                    ${roundFigures ? signal.target.toFixed(0) : signal.target.toFixed(2)}
+                    {futuresSpread > 0 && (
+                      <div className="text-blue-400 text-xs mt-1">
+                        [${roundFigures ? (signal.target + futuresSpread).toFixed(0) : (signal.target + futuresSpread).toFixed(2)}]
+                      </div>
+                    )}
                   </div>
                 </div>
                 {signal.nextTarget && (
                   <div>
                     <div className="text-gray-400">Next Target</div>
                     <div className="font-mono font-bold text-white">
-                      ${signal.nextTarget.toFixed(2)}
+                      ${roundFigures ? signal.nextTarget.toFixed(0) : signal.nextTarget.toFixed(2)}
+                      {futuresSpread > 0 && (
+                        <div className="text-blue-400 text-xs mt-1">
+                          [${roundFigures ? (signal.nextTarget + futuresSpread).toFixed(0) : (signal.nextTarget + futuresSpread).toFixed(2)}]
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -333,10 +369,17 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
           
           <div className="bg-slate-800 p-3 rounded-lg border border-yellow-500/30 mb-4">
             <div className="text-yellow-400 font-mono text-lg font-bold">
-              Current Price: ${currentPrice.toFixed(2)}
+              Current Price: ${roundFigures ? currentPrice.toFixed(0) : currentPrice.toFixed(2)}
+              {futuresSpread > 0 && (
+                <span className="text-blue-400 text-lg ml-3">
+                  [Futures: ${roundFigures ? (currentPrice + futuresSpread).toFixed(0) : (currentPrice + futuresSpread).toFixed(2)}]
+                </span>
+              )}
             </div>
           </div>
         </div>
+
+        <SentimentHistogram trades={trades} currentPrice={currentPrice} futuresSpread={futuresSpread} roundFigures={roundFigures} />
 
         <div className="space-y-3">
           {sentiments.map((sentiment, index) => (
@@ -357,9 +400,14 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
                   <div className="flex items-center gap-4">
                     <div className="flex flex-col">
                       <span className="font-mono text-2xl font-bold text-white">
-                        ${sentiment.level.toFixed(2)}
+                        ${roundFigures ? sentiment.level.toFixed(0) : sentiment.level.toFixed(2)}
+                        {futuresSpread > 0 && (
+                          <span className="text-blue-400 text-lg ml-2">
+                            [${roundFigures ? (sentiment.level + futuresSpread).toFixed(0) : (sentiment.level + futuresSpread).toFixed(2)}]
+                          </span>
+                        )}
                       </span>
-                      <span className="text-sm text-gray-400">Breakeven</span>
+                      <span className="text-sm text-gray-400">Breakeven {futuresSpread > 0 && <span className="text-blue-400">[Futures]</span>}</span>
                     </div>
                     <div className="flex flex-col gap-1">
                       <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${
@@ -414,8 +462,6 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
             </div>
           ))}
         </div>
-
-        <SentimentHistogram trades={trades} currentPrice={currentPrice} />
       </div>
 
       {selectedBreakeven !== null && (

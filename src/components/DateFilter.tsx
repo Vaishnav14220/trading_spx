@@ -5,16 +5,20 @@ interface DateFilterProps {
   dates: string[];
   selectedDate: string;
   showTodayOnly: boolean;
+  roundFigures: boolean;
   onDateChange: (date: string) => void;
   onTodayFilterChange: (showTodayOnly: boolean) => void;
+  onRoundFiguresChange: (roundFigures: boolean) => void;
 }
 
 const DateFilter: React.FC<DateFilterProps> = ({ 
   dates, 
   selectedDate, 
   showTodayOnly,
+  roundFigures,
   onDateChange, 
-  onTodayFilterChange 
+  onTodayFilterChange,
+  onRoundFiguresChange
 }) => {
   return (
     <div className="flex items-center gap-6">
@@ -27,6 +31,17 @@ const DateFilter: React.FC<DateFilterProps> = ({
         />
         <Clock className="h-4 w-4" />
         <span>Today Only</span>
+      </label>
+      
+      <label className="flex items-center gap-2 text-gray-300 hover:text-gray-200 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={roundFigures}
+          onChange={(e) => onRoundFiguresChange(e.target.checked)}
+          className="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-800"
+        />
+        <CalendarDays className="h-4 w-4" />
+        <span>Round Figures</span>
       </label>
 
       {!showTodayOnly && dates.length > 0 && (
