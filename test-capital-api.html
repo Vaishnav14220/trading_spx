@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Capital.com API</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0a0a;
+            color: #00ff00;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #00ff00;
+            border-bottom: 2px solid #00ff00;
+            padding-bottom: 10px;
+        }
+        .section {
+            background: #1a1a1a;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        button {
+            background: #00ff00;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            font-size: 14px;
+            cursor: pointer;
+            border-radius: 5px;
+            margin: 5px;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #00cc00;
+        }
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        .log {
+            background: #000;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+        }
+        .error { color: #ff0000; }
+        .success { color: #00ff00; }
+        .info { color: #00aaff; }
+        .warning { color: #ffaa00; }
+        input {
+            background: #000;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 8px;
+            margin: 5px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            width: 300px;
+        }
+        label {
+            display: inline-block;
+            width: 100px;
+            color: #00ff00;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Capital.com API Test Tool</h1>
+    
+    <div class="section">
+        <h3>1. Enter Credentials</h3>
+        <div>
+            <label>Email:</label>
+            <input type="text" id="email" placeholder="your-email@example.com" value="vaishnav14220@gmail.com">
+        </div>
+        <div>
+            <label>Password:</label>
+            <input type="password" id="password" placeholder="Your password" value="Vvn@#411037">
+        </div>
+        <div>
+            <label>API Key:</label>
+            <input type="text" id="apiKey" placeholder="Your API key" value="9bP6pGlM0Tt4q7fO">
+        </div>
+        <button onclick="testAuth()">Test Authentication</button>
+    </div>
+
+    <div class="section">
+        <h3>2. Test Endpoints</h3>
+        <button onclick="testMarketSearch()" id="btnSearch" disabled>Search US500 Market</button>
+        <button onclick="testHistoricalData()" id="btnHistory" disabled>Fetch Historical Data</button>
+        <button onclick="clearLogs()">Clear Logs</button>
+    </div>
+
+    <div class="section">
+        <h3>📊 Logs</h3>
+        <div class="log" id="logs"></div>
+    </div>
+
+    <script>
+        const BASE_URL = "https://api-capital.backend-capital.com";
+        let tokens = null;
+
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const div = document.createElement('div');
+            div.className = type;
+            const timestamp = new Date().toLocaleTimeString();
+            div.textContent = `[${timestamp}] ${message}`;
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight;
+            console.log(message);
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+        }
+
+        async function testAuth() {
+            clearLogs();
+            log('🔐 Testing Authentication...', 'info');
+            
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const apiKey = document.getElementById('apiKey').value;
+
+            if (!email || !password || !apiKey) {
+                log('❌ Please fill in all credentials', 'error');
+                return;
+            }
+
+            try {
+                log(`Calling: POST ${BASE_URL}/api/v1/session`, 'info');
+                
+                const response = await fetch(`${BASE_URL}/api/v1/session`, {
+                    method: 'POST',
+                    headers: {
+                        'X-CAP-API-KEY': apiKey,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        identifier: email,
+                        password: password,
+                        encryptedPassword: false,
+                    }),
+                });
+
+                log(`Response status: ${response.status}`, response.ok ? 'success' : 'error');
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    log(`❌ Authentication failed: ${errorText}`, 'error');
+                    return;
+                }
+
+                const cst = response.headers.get('CST');
+                const securityToken = response.headers.get('X-SECURITY-TOKEN');
+
+                if (!cst || !securityToken) {
+                    log('❌ Tokens not received in response headers', 'error');
+                    return;
+                }
+
+                tokens = { cst, securityToken };
+                log('✅ Authentication successful!', 'success');
+                log(`CST: ${cst.substring(0, 20)}...`, 'success');
+                log(`Security Token: ${securityToken.substring(0, 20)}...`, 'success');
+                
+                // Enable other buttons
+                document.getElementById('btnSearch').disabled = false;
+                document.getElementById('btnHistory').disabled = false;
+
+            } catch (error) {
+                log(`❌ Exception: ${error.message}`, 'error');
+            }
+        }
+
+        async function testMarketSearch() {
+            if (!tokens) {
+                log('❌ Please authenticate first', 'error');
+                return;
+            }
+
+            log('🔍 Searching for US500 market...', 'info');
+
+            try {
+                const url = `${BASE_URL}/api/v1/markets?searchTerm=US500`;
+                log(`Calling: GET ${url}`, 'info');
+
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'X-SECURITY-TOKEN': tokens.securityToken,
+                        'CST': tokens.cst,
+                    },
+                });
+
+                log(`Response status: ${response.status}`, response.ok ? 'success' : 'error');
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    log(`❌ Market search failed: ${errorText}`, 'error');
+                    return;
+                }
+
+                const data = await response.json();
+                log(`✅ Market search successful`, 'success');
+                log(`Found ${data.markets?.length || 0} markets`, 'info');
+                
+                if (data.markets && data.markets.length > 0) {
+                    data.markets.forEach((market, idx) => {
+                        log(`  ${idx + 1}. ${market.instrumentName} (${market.epic}) - ID: ${market.marketId}`, 'info');
+                    });
+                }
+
+            } catch (error) {
+                log(`❌ Exception: ${error.message}`, 'error');
+            }
+        }
+
+        async function testHistoricalData() {
+            if (!tokens) {
+                log('❌ Please authenticate first', 'error');
+                return;
+            }
+
+            log('📊 Fetching historical data...', 'info');
+
+            try {
+                // Try different endpoint formats
+                const endpoints = [
+                    `${BASE_URL}/api/v1/prices/US500?resolution=MINUTE&max=100`,
+                    `${BASE_URL}/api/v1/prices/US500?resolution=MINUTE_5&max=100`,
+                    `${BASE_URL}/api/v1/prices/US500?resolution=MINUTE&from=${new Date(Date.now() - 24*60*60*1000).toISOString()}&to=${new Date().toISOString()}`,
+                ];
+
+                for (const url of endpoints) {
+                    log(`\nTrying: GET ${url}`, 'info');
+
+                    const response = await fetch(url, {
+                        method: 'GET',
+                        headers: {
+                            'X-SECURITY-TOKEN': tokens.securityToken,
+                            'CST': tokens.cst,
+                        },
+                    });
+
+                    log(`Response status: ${response.status}`, response.ok ? 'success' : 'warning');
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        log(`✅ Success! Data structure: ${JSON.stringify(Object.keys(data))}`, 'success');
+                        
+                        if (data.prices && Array.isArray(data.prices)) {
+                            log(`📈 Received ${data.prices.length} price bars`, 'success');
+                            if (data.prices.length > 0) {
+                                const first = data.prices[0];
+                                log(`First bar: ${first.snapshotTimeUTC} - Close: ${first.closePrice?.bid}`, 'info');
+                                const last = data.prices[data.prices.length - 1];
+                                log(`Last bar: ${last.snapshotTimeUTC} - Close: ${last.closePrice?.bid}`, 'info');
+                            }
+                            break; // Success, stop trying other endpoints
+                        } else {
+                            log(`⚠️ Unexpected data format: ${JSON.stringify(data).substring(0, 200)}`, 'warning');
+                        }
+                    } else {
+                        const errorText = await response.text();
+                        log(`❌ Failed: ${errorText}`, 'error');
+                    }
+                }
+
+            } catch (error) {
+                log(`❌ Exception: ${error.message}`, 'error');
+            }
+        }
+
+        // Auto-load credentials from localStorage if available
+        window.onload = () => {
+            const saved = localStorage.getItem('capital_config');
+            if (saved) {
+                try {
+                    const config = JSON.parse(saved);
+                    document.getElementById('email').value = config.identifier || '';
+                    document.getElementById('password').value = config.password || '';
+                    document.getElementById('apiKey').value = config.apiKey || '';
+                } catch (e) {}
+            }
+        };
+    </script>
+</body>
+</html>

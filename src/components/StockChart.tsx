@@ -52,7 +52,8 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
         const width = chartContainerRef.current.clientWidth;
         const height = !isMaximized ? window.innerHeight - 100 : 550;
         chartRef.current.applyOptions({ width, height });
-        chartRef.current.timeScale().fitContent();
+        // Don't auto-fit on maximize - keep current view
+        // chartRef.current.timeScale().fitContent();
       }
     }, 50);
   };
@@ -236,11 +237,13 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
         borderColor: '#2B2B43',
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 5,
-        barSpacing: 3,
+        rightOffset: 50, // Keep candles away from right edge (25% space)
+        barSpacing: 6,
         minBarSpacing: 0.5,
         fixLeftEdge: false,
         fixRightEdge: false,
+        lockVisibleTimeRangeOnResize: true,
+        rightBarStaysOnScroll: false,
       },
       watermark: {
         visible: true,
@@ -331,17 +334,16 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
 
     updateBreakevenLines(chartRef.current);
     
-    // Auto-scale (fit content) but don't auto-scroll to latest
-    chartRef.current.timeScale().fitContent();
+    // Don't auto-scroll - let user control the view
+    // chartRef.current.timeScale().fitContent();
   }, [data, trades, currentType, showVolume, futuresSpread, roundFigures]);
 
-  // Auto-scale only when new data arrives, without scrolling
-  useEffect(() => {
-    if (chartRef.current && data.length > 0) {
-      // Just fit content to scale properly, don't scroll to latest
-      chartRef.current.timeScale().fitContent();
-    }
-  }, [data]);
+  // Don't auto-scroll when new data arrives - keep the current view stable
+  // useEffect(() => {
+  //   if (chartRef.current && data.length > 0) {
+  //     chartRef.current.timeScale().fitContent();
+  //   }
+  // }, [data]);
 
   const currentPrice = data.length > 0 ? data[data.length - 1].close : 0;
   const prevPrice = data.length > 1 ? data[data.length - 2].close : currentPrice;
