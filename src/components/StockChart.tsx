@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, ISeriesApi, LineStyle, IChartApi } from 'lightweight-charts';
+import { createChart, ISeriesApi, LineStyle, IChartApi } from 'lightweight-charts';
 import { StockChartProps } from '../types/chart';
 import { LineChart, BarChart2, Maximize2, Minimize2, TrendingUp, Activity } from 'lucide-react';
 import { OptionTrade } from '../types/options';
@@ -169,7 +169,7 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
       }
     });
 
-    breakevenGroups.forEach(({ trades: levelTrades, totalPremium, direction }, level) => {
+    breakevenGroups.forEach(({ trades, totalPremium, direction }, level) => {
       const displayLevel = roundFigures ? level.toFixed(0) : level.toFixed(2);
       const futuresLevel = roundFigures ? (level + futuresSpread).toFixed(0) : (level + futuresSpread).toFixed(2);
       const futuresAdjustedPrice = futuresSpread > 0 ? ` [$${futuresLevel}]` : '';

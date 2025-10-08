@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { X } from 'lucide-react';
-import { createChart, ColorType, IChartApi } from 'lightweight-charts';
+import { createChart, IChartApi } from 'lightweight-charts';
 import { OptionTrade } from '../types/options';
 
 interface IVHistoryModalProps {

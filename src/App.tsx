@@ -8,14 +8,13 @@ import { fetchFuturesSpread, FuturesSpreadData } from './services/futuresApi';
 import { getFuturesWebSocketService, FuturesRealtimeData } from './services/futuresWebSocket';
 import { parseOptionsData } from './services/optionsParser';
 import type { ChartData } from './types/chart';
-import { LineChart, RefreshCw, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { LineChart, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import OptionsTable from './components/OptionsTable';
 import OptionsSummary from './components/OptionsSummary';
 import OptionsInput from './components/OptionsInput';
 import SentimentAnalysis from './components/SentimentAnalysis';
 import DateFilter from './components/DateFilter';
 import CapitalSettings from './components/CapitalSettings';
-import MarketSelector from './components/MarketSelector';
 import ProcessOptionsWidget from './components/ProcessOptionsWidget';
 import { isToday, extractDate } from './utils/dateUtils';
 
@@ -32,10 +31,19 @@ const App: React.FC = () => {
   const [useRealtime, setUseRealtime] = useState(true);
   const [credentialsSet, setCredentialsSet] = useState(false);
   const [futuresSpread, setFuturesSpread] = useState<FuturesSpreadData | FuturesRealtimeData | null>(null);
-  const [futuresError, setFuturesError] = useState<string>('');
   const [futuresConnected, setFuturesConnected] = useState(false);
   const [futuresUpdateFlash, setFuturesUpdateFlash] = useState(false);
-  const [optionsData, setOptionsData] = useState({
+  const [optionsData, setOptionsData] = useState<{
+    trades: any[];
+    summary: {
+      totalCallVolume: number;
+      totalPutVolume: number;
+      averageCallPrice: number;
+      averagePutPrice: number;
+      averageCallBreakeven: number;
+      averagePutBreakeven: number;
+    };
+  }>({
     trades: [],
     summary: {
       totalCallVolume: 0,
@@ -134,10 +142,10 @@ const App: React.FC = () => {
       const spread = await fetchFuturesSpread();
       console.log('[App] Futures spread loaded:', spread);
       setFuturesSpread(spread);
-      setFuturesError('');
+      // setFuturesError('');
     } catch (error) {
       console.error('[App] Failed to load futures spread:', error);
-      setFuturesError(error instanceof Error ? error.message : 'Failed to load spread');
+      // setFuturesError(error instanceof Error ? error.message : 'Failed to load spread');
     }
   };
 
@@ -153,7 +161,7 @@ const App: React.FC = () => {
         futuresWS.connect(
           (data) => {
             setFuturesSpread(data);
-            setFuturesError('');
+            // setFuturesError('');
             // Flash animation on update
             setFuturesUpdateFlash(true);
             setTimeout(() => setFuturesUpdateFlash(false), 300);
@@ -204,7 +212,7 @@ const App: React.FC = () => {
       futuresWS.connect(
         (data) => {
           setFuturesSpread(data);
-          setFuturesError('');
+          // setFuturesError('');
           // Flash animation on update
           setFuturesUpdateFlash(true);
           setTimeout(() => setFuturesUpdateFlash(false), 300);

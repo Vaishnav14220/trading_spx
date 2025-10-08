@@ -1,6 +1,6 @@
 import { ChartData } from '../types/chart';
 
-const API_URL = 'https://api.investing.com/api/financialdata/1175153/historical/chart/?interval=PT1M&pointscount=160&endTime=' + Math.floor(Date.now() / 1000);
+// const API_URL = 'https://api.investing.com/api/financialdata/1175153/historical/chart/?interval=PT1M&pointscount=160&endTime=' + Math.floor(Date.now() / 1000);
 
 interface InvestingResponse {
   data: [number, number, number, number, number, number, number][]; // [timestamp, open, high, low, close, volume, ?]
@@ -8,8 +8,8 @@ interface InvestingResponse {
 }
 
 let lastData: ChartData[] = [];
-let lastFetchTime = 0;
-const FETCH_INTERVAL = 60000; // Fetch new data every minute
+// let lastFetchTime = 0;
+// const FETCH_INTERVAL = 60000; // Fetch new data every minute
 
 export async function fetchSPXData(): Promise<ChartData[]> {
   try {
@@ -40,7 +40,7 @@ export async function fetchSPXData(): Promise<ChartData[]> {
       close: close + 1
     }));
     
-    lastFetchTime = Date.now();
+    // lastFetchTime = Date.now();
     return lastData;
 
   } catch (error) {

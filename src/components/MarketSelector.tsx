@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { searchMarkets, getMarketDetails, Market } from '../services/marketSearch';
+import { searchMarkets, Market } from '../services/marketSearch';
 import { Search, X } from 'lucide-react';
 
 interface MarketSelectorProps {

@@ -33,8 +33,8 @@ class FuturesWebSocketService {
   private tokens: SessionTokens | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
-  private pingInterval: NodeJS.Timeout | null = null;
+  private reconnectTimeout: any = null;
+  private pingInterval: any = null;
   
   private spotEpic = 'US500';
   private futuresEpic = 'ESZ2025';

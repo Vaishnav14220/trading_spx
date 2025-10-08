@@ -15,8 +15,8 @@ interface WebSocketMessage {
 
 export class SPXWebSocketService {
   private ws: WebSocket | null = null;
-  private reconnectTimer: NodeJS.Timeout | null = null;
-  private pingTimer: NodeJS.Timeout | null = null;
+  private reconnectTimer: any = null;
+  private pingTimer: any = null;
   private priceHistory: ChartData[] = [];
   private currentCandle: Partial<ChartData> = {};
   private lastCandleTime: number = 0;
@@ -141,7 +141,7 @@ export class SPXWebSocketService {
     }
     
     if (data.destination === "quote" && data.payload) {
-      const { bid, ask, timestamp } = data.payload;
+      const { bid, timestamp } = data.payload;
       
       if (bid && timestamp) {
         // Use bid price as close, you could also use mid price: (bid + ask) / 2

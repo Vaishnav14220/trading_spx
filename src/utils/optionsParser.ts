@@ -8,8 +8,22 @@ export const parseOptionsData = (data: string): OptionTrade[] => {
     .map(line => {
       const parts = line.trim().split('\t');
       const timestamp = parseTimestamp(parts[0]);
-      // Rest of the parsing logic remains the same
-      // ...
+      
+      if (parts.length < 4) return null;
+      
+      const strike = parseFloat(parts[1]);
+      const price = parseFloat(parts[2]);
+      const breakeven = parseFloat(parts[3]);
+      const type = parts[4]?.toUpperCase() || 'CALL';
+      
+      return {
+        timestamp,
+        strike,
+        price,
+        breakeven,
+        type,
+        volume: 1,
+      };
     })
-    .filter(trade => !isNaN(trade.strike) && !isNaN(trade.price) && !isNaN(trade.breakeven));
+    .filter((trade): trade is OptionTrade => trade !== null && !isNaN(trade.strike) && !isNaN(trade.price) && !isNaN(trade.breakeven));
 };
