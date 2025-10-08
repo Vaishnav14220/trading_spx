@@ -10,7 +10,7 @@ export const CapitalSettings: React.FC<CapitalSettingsProps> = ({ onCredentialsS
   const [isOpen, setIsOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [apiKey, setApiKey] = useState('9bP6pGlM0Tt4q7fO');
-  const [identifier, setIdentifier] = useState('');
+  const [identifier, setIdentifier] = useState('vaishnav14220@gmail.com');
   const [password, setPassword] = useState('Vvn@#411037');
   const [isSaved, setIsSaved] = useState(false);
 
