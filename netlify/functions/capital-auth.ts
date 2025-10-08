@@ -34,16 +34,32 @@ export const handler: Handler = async (event) => {
     const identifier = process.env.CAPITAL_IDENTIFIER;
     const password = process.env.CAPITAL_PASSWORD;
 
+    console.log('[capital-auth] Environment check:', {
+      hasApiKey: !!apiKey,
+      hasIdentifier: !!identifier,
+      hasPassword: !!password,
+      apiKeyLength: apiKey?.length,
+      identifierValue: identifier,
+    });
+
     if (!apiKey || !identifier || !password) {
+      console.error('[capital-auth] Missing credentials');
       return {
         statusCode: 500,
         headers,
         body: JSON.stringify({ 
           error: 'Server configuration error: Missing credentials',
-          details: 'Please configure CAPITAL_API_KEY, CAPITAL_IDENTIFIER, and CAPITAL_PASSWORD in Netlify environment variables'
+          details: 'Please configure CAPITAL_API_KEY, CAPITAL_IDENTIFIER, and CAPITAL_PASSWORD in Netlify environment variables',
+          debug: {
+            hasApiKey: !!apiKey,
+            hasIdentifier: !!identifier,
+            hasPassword: !!password,
+          }
         }),
       };
     }
+
+    console.log('[capital-auth] Attempting to create session with Capital.com');
 
     // Create session with Capital.com
     const response = await fetch(`${BASE_URL}/api/v1/session`, {
@@ -59,14 +75,18 @@ export const handler: Handler = async (event) => {
       }),
     });
 
+    console.log('[capital-auth] Capital.com response status:', response.status);
+
     if (!response.ok) {
       const errorText = await response.text();
+      console.error('[capital-auth] Authentication failed:', errorText);
       return {
         statusCode: response.status,
         headers,
         body: JSON.stringify({ 
           error: 'Authentication failed',
-          details: errorText 
+          details: errorText,
+          status: response.status,
         }),
       };
     }
@@ -74,14 +94,27 @@ export const handler: Handler = async (event) => {
     const cst = response.headers.get('CST');
     const securityToken = response.headers.get('X-SECURITY-TOKEN');
 
+    console.log('[capital-auth] Tokens received:', {
+      hasCst: !!cst,
+      hasSecurityToken: !!securityToken,
+    });
+
     if (!cst || !securityToken) {
+      console.error('[capital-auth] Tokens not received in response headers');
       return {
         statusCode: 500,
         headers,
-        body: JSON.stringify({ error: 'Authentication tokens not received' }),
+        body: JSON.stringify({ 
+          error: 'Authentication tokens not received',
+          debug: {
+            hasCst: !!cst,
+            hasSecurityToken: !!securityToken,
+          }
+        }),
       };
     }
 
+    console.log('[capital-auth] Session created successfully');
     return {
       statusCode: 200,
       headers,
@@ -91,13 +124,14 @@ export const handler: Handler = async (event) => {
       }),
     };
   } catch (error) {
-    console.error('Error in capital-auth function:', error);
+    console.error('[capital-auth] Error:', error);
     return {
       statusCode: 500,
       headers,
       body: JSON.stringify({ 
         error: 'Internal server error',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
       }),
     };
   }

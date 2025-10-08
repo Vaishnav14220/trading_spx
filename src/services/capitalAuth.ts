@@ -29,7 +29,9 @@ export class CapitalAuthService {
     try {
       // Use Netlify Function if deployed, otherwise use direct API
       if (isNetlify) {
-        console.log('Using Netlify Function for authentication');
+        console.log('[Auth] Using Netlify Function for authentication');
+        console.log('[Auth] Fetching from:', '/.netlify/functions/capital-auth');
+        
         const response = await fetch('/.netlify/functions/capital-auth', {
           method: 'POST',
           headers: {
@@ -37,14 +39,25 @@ export class CapitalAuthService {
           },
         });
 
+        console.log('[Auth] Response status:', response.status);
+
         if (!response.ok) {
           const error = await response.json();
-          throw new Error(error.details || error.error || 'Authentication failed');
+          console.error('[Auth] Authentication failed:', error);
+          throw new Error(
+            `Authentication failed (${response.status}): ${error.details || error.error || 'Unknown error'}\n` +
+            `Debug info: ${JSON.stringify(error.debug || {})}`
+          );
         }
 
         const tokens = await response.json();
+        console.log('[Auth] Tokens received:', {
+          hasCst: !!tokens.cst,
+          hasSecurityToken: !!tokens.securityToken,
+        });
+        
         this.tokens = tokens;
-        console.log('Session created successfully via Netlify Function');
+        console.log('[Auth] Session created successfully via Netlify Function');
         return this.tokens;
       } else {
         // Local development - use localStorage credentials

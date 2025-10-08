@@ -1,16 +1,15 @@
+functionsDirectory = "C:\\Users\\vaish\\Downloads\\spx\\netlify\\functions"
+functionsDirectoryOrigin = "default"
 redirectsOrigin = "config"
 plugins = []
 headers = []
-
-[functions]
-
-[functions."*"]
 
 [build]
 publish = "C:\\Users\\vaish\\Downloads\\spx\\dist"
 publishOrigin = "config"
 commandOrigin = "config"
 command = "npx vite build"
+functions = "C:\\Users\\vaish\\Downloads\\spx\\netlify\\functions"
 
 [build.environment]
 
@@ -25,6 +24,10 @@ command = "npx vite build"
 [build.processing.js]
 
 [build.services]
+
+[functions]
+
+[functions."*"]
 
 [[redirects]]
 from = "/*"
