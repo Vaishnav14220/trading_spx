@@ -16,6 +16,7 @@ import SentimentAnalysis from './components/SentimentAnalysis';
 import DateFilter from './components/DateFilter';
 import CapitalSettings from './components/CapitalSettings';
 import ProcessOptionsWidget from './components/ProcessOptionsWidget';
+import FlowChart from './components/FlowChart';
 import { extractDate } from './utils/dateUtils';
 
 const App: React.FC = () => {
@@ -527,6 +528,11 @@ const App: React.FC = () => {
             <h2 className="text-2xl font-bold text-white mb-4">Process Options Data</h2>
             <OptionsInput onSubmit={handleOptionsSubmit} />
           </div>
+          
+          {/* Flow Chart */}
+          {filteredTrades.length > 0 && (
+            <FlowChart trades={filteredTrades} />
+          )}
           
           <div className="space-y-6">
             <OptionsSummary summary={optionsData.summary} />
