@@ -16,7 +16,7 @@ import SentimentAnalysis from './components/SentimentAnalysis';
 import DateFilter from './components/DateFilter';
 import CapitalSettings from './components/CapitalSettings';
 import ProcessOptionsWidget from './components/ProcessOptionsWidget';
-import { isToday, extractDate } from './utils/dateUtils';
+import { extractDate } from './utils/dateUtils';
 
 const App: React.FC = () => {
   const [stockData, setStockData] = useState<ChartData[]>([]);
@@ -150,7 +150,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleMarketSelection = (spotEpic: string, futuresEpic: string) => {
+  const _handleMarketSelection = (spotEpic: string, futuresEpic: string) => {
     console.log('[App] Markets selected:', { spotEpic, futuresEpic });
     
     if (useRealtime) {
