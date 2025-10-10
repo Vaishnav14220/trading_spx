@@ -171,10 +171,29 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
       }
     });
 
+    // Calculate min and max premiums for scaling line width
+    const premiums = Array.from(breakevenGroups.values()).map(g => g.totalPremium);
+    const minPremium = Math.min(...premiums);
+    const maxPremium = Math.max(...premiums);
+    
     breakevenGroups.forEach(({ trades, totalPremium, direction }, level) => {
       const displayLevel = roundFigures ? level.toFixed(0) : level.toFixed(2);
       const futuresLevel = roundFigures ? (level + futuresSpread).toFixed(0) : (level + futuresSpread).toFixed(2);
       const futuresAdjustedPrice = futuresSpread > 0 ? ` [$${futuresLevel}]` : '';
+      
+      // Calculate line width based on premium (1-6 pixels)
+      const minWidth = 1;
+      const maxWidth = 6;
+      let lineWidth = minWidth;
+      
+      if (maxPremium > minPremium) {
+        // Normalize premium to 0-1 range, then scale to width range
+        const normalizedPremium = (totalPremium - minPremium) / (maxPremium - minPremium);
+        lineWidth = minWidth + (normalizedPremium * (maxWidth - minWidth));
+      } else {
+        // If all premiums are the same, use middle width
+        lineWidth = (minWidth + maxWidth) / 2;
+      }
       
       // Only show title/label if showLabels is true
       const lineTitle = showLabels 
@@ -183,7 +202,7 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
       
       const line = chart.addLineSeries({
         color: direction === 'above' ? '#22C55E' : '#EF4444',
-        lineWidth: 1,
+        lineWidth: Math.round(lineWidth),
         lineStyle: LineStyle.Dashed,
         title: lineTitle,
       });
