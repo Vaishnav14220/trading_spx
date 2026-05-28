@@ -4,10 +4,15 @@ import { ArrowUpCircle, ArrowDownCircle, ArrowUpDown, TrendingUp, TrendingDown, 
 import TradesModal from './TradesModal';
 import SentimentHistogram from './SentimentHistogram';
 import TradeContextTable from './TradeContextTable';
-
-const DELTA_THRESHOLD = 0.64;
-const COPY_DELTA_THRESHOLD = 0.64;
-const MID_DELTA_RANGE = { min: 0.50, max: 0.60 };
+import { buildScoredSentiment } from '../utils/sentimentScoring';
+import {
+  classifyTrade,
+  COPY_DELTA_THRESHOLD,
+  getBreakevenLevel,
+  getTradePremium,
+  HIGH_DELTA_THRESHOLD,
+  MID_DELTA_RANGE,
+} from '../utils/tradeClassification';
 
 interface SentimentAnalysisProps {
   trades: OptionTrade[];
@@ -16,25 +21,17 @@ interface SentimentAnalysisProps {
   roundFigures?: boolean;
 }
 
-interface BreakevenSentiment {
-  level: number;
-  totalPremium: number;
-  direction: 'above' | 'below';
-  trades: OptionTrade[];
-  distance: number;
-}
-
 interface AggregatedSentiment {
   bullishPremium: number;
   bearishPremium: number;
 }
 
-type SortField = 'level' | 'premium' | 'distance';
+type SortField = 'score' | 'level' | 'premium' | 'distance';
 type SortDirection = 'asc' | 'desc';
 
 const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPrice = 0, futuresSpread = 0, roundFigures = false }) => {
-  const [sortField, setSortField] = useState<SortField>('distance');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [sortField, setSortField] = useState<SortField>('score');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [selectedBreakeven, setSelectedBreakeven] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [copySuccess, setCopySuccess] = useState({ high: false, mid: false });
@@ -49,87 +46,17 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
   };
 
   const { sentiments, signal } = useMemo(() => {
-    const highDeltaTrades = trades.filter(trade => Math.abs(Number(trade.delta)) > DELTA_THRESHOLD);
-    
-    if (highDeltaTrades.length === 0) {
-      return { sentiments: [], signal: null };
-    }
+    const analysis = buildScoredSentiment({
+      trades,
+      currentPrice,
+      roundFigures,
+      highDeltaThreshold: HIGH_DELTA_THRESHOLD,
+    });
 
-    const breakevens = highDeltaTrades.reduce<BreakevenSentiment[]>((acc, trade) => {
-      const [bid, ask] = trade.bidAsk.split('x').map(p => parseFloat(p));
-      const midPrice = (bid + ask) / 2;
-      const isBuy = trade.price >= midPrice;
-      const direction = (trade.type === 'C' && isBuy) || (trade.type === 'P' && !isBuy) ? 'above' : 'below';
-      
-      // Round breakeven if roundFigures is enabled
-      const breakevenLevel = roundFigures ? Math.round(trade.breakeven) : trade.breakeven;
-      const distance = breakevenLevel - currentPrice;
-      
-      const existingSentiment = acc.find(s => s.level === breakevenLevel);
-      const premium = trade.price * trade.quantity * 100;
-      
-      if (existingSentiment) {
-        existingSentiment.totalPremium += premium;
-        existingSentiment.trades.push(trade);
-      } else {
-        acc.push({
-          level: breakevenLevel,
-          totalPremium: premium,
-          direction,
-          trades: [trade],
-          distance
-        });
-      }
-      
-      return acc;
-    }, []);
-
-    const sortedByPremium = [...breakevens].sort((a, b) => 
-      Math.abs(b.totalPremium) - Math.abs(a.totalPremium)
-    );
-
-    const significantLevels = sortedByPremium.slice(0, Math.min(3, sortedByPremium.length));
-    const nearestSignificant = significantLevels.reduce((nearest, current) => {
-      if (!nearest) return current;
-      return Math.abs(current.distance) < Math.abs(nearest.distance) ? current : nearest;
-    }, significantLevels[0]);
-
-    let signal = null;
-    if (nearestSignificant) {
-      // Determine trade direction
-      const tradeDirection = nearestSignificant.direction === 'above' ? 'BUY' : 'SELL';
-      
-      // Get all levels in the direction of the trade
-      const levelsInDirection = breakevens.filter(level => 
-        tradeDirection === 'BUY' ? 
-          level.level > currentPrice : 
-          level.level < currentPrice
-      );
-      
-      // Sort by premium (highest first)
-      const sortedByPremiumInDirection = levelsInDirection.sort((a, b) => 
-        Math.abs(b.totalPremium) - Math.abs(a.totalPremium)
-      );
-      
-      // Target is the level with highest premium
-      const target = sortedByPremiumInDirection[0];
-      // Next target is the level with second highest premium
-      const nextTarget = sortedByPremiumInDirection[1];
-
-      if (target) {
-        signal = {
-          action: tradeDirection,
-          entry: currentPrice,
-          target: target.level,
-          nextTarget: nextTarget?.level,
-          points: Math.abs(target.level - currentPrice),
-          premium: target.totalPremium
-        };
-      }
-    }
-
-    const sortedSentiments = breakevens.sort((a, b) => {
+    const sortedSentiments = [...analysis.sentiments].sort((a, b) => {
       switch (sortField) {
+        case 'score':
+          return (sortDirection === 'asc' ? a.score - b.score : b.score - a.score);
         case 'level':
           return (sortDirection === 'asc' ? a.level - b.level : b.level - a.level);
         case 'premium':
@@ -141,7 +68,7 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
       }
     });
 
-    return { sentiments: sortedSentiments, signal };
+    return { sentiments: sortedSentiments, signal: analysis.signal };
   }, [trades, currentPrice, sortField, sortDirection, roundFigures]);
 
   const handleTradesClick = (breakeven: number) => {
@@ -160,21 +87,19 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
     const breakevensMap = new Map<number, AggregatedSentiment>();
 
     highDeltaTrades.forEach(trade => {
-      const [bid, ask] = trade.bidAsk.split('x').map(p => parseFloat(p));
-      const midPrice = (bid + ask) / 2;
-      const isBuy = trade.price >= midPrice;
-      const isBullish = (trade.type === 'C' && isBuy) || (trade.type === 'P' && !isBuy);
-      const premium = trade.price * trade.quantity * 100;
+      const classified = classifyTrade(trade);
+      const premium = getTradePremium(trade);
+      const level = getBreakevenLevel(trade, roundFigures);
       
-      const existing = breakevensMap.get(trade.breakeven) || { bullishPremium: 0, bearishPremium: 0 };
+      const existing = breakevensMap.get(level) || { bullishPremium: 0, bearishPremium: 0 };
       
-      if (isBullish) {
+      if (classified.bias === 'bullish') {
         existing.bullishPremium += premium;
       } else {
         existing.bearishPremium += premium;
       }
       
-      breakevensMap.set(trade.breakeven, existing);
+      breakevensMap.set(level, existing);
     });
 
     const formattedBreakevens = Array.from(breakevensMap.entries())
@@ -203,21 +128,19 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
     const breakevensMap = new Map<number, AggregatedSentiment>();
 
     midDeltaTrades.forEach(trade => {
-      const [bid, ask] = trade.bidAsk.split('x').map(p => parseFloat(p));
-      const midPrice = (bid + ask) / 2;
-      const isBuy = trade.price >= midPrice;
-      const isBullish = (trade.type === 'C' && isBuy) || (trade.type === 'P' && !isBuy);
-      const premium = trade.price * trade.quantity * 100;
+      const classified = classifyTrade(trade);
+      const premium = getTradePremium(trade);
+      const level = getBreakevenLevel(trade, roundFigures);
       
-      const existing = breakevensMap.get(trade.breakeven) || { bullishPremium: 0, bearishPremium: 0 };
+      const existing = breakevensMap.get(level) || { bullishPremium: 0, bearishPremium: 0 };
       
-      if (isBullish) {
+      if (classified.bias === 'bullish') {
         existing.bullishPremium += premium;
       } else {
         existing.bearishPremium += premium;
       }
       
-      breakevensMap.set(trade.breakeven, existing);
+      breakevensMap.set(level, existing);
     });
 
     const formattedBreakevens = Array.from(breakevensMap.entries())
@@ -261,7 +184,7 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
         <div className="sticky top-0 bg-slate-900 pb-4 z-10">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-white">
-              High Delta Levels (&gt;{DELTA_THRESHOLD})
+              High Delta Levels (&gt;{HIGH_DELTA_THRESHOLD})
             </h3>
             <div className="flex items-center gap-2">
               <button
@@ -291,24 +214,39 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
           </div>
 
           {signal && (
-            <div className={`mb-4 p-4 rounded-lg border ${
-              signal.action === 'BUY' ? 
-                'bg-green-500/10 border-green-500' : 
-                'bg-red-500/10 border-red-500'
+            <div className={`mb-4 rounded-lg border p-3 ${
+              signal.action === 'BUY'
+                ? 'border-green-500/60 bg-green-500/10'
+                : signal.action === 'SELL'
+                ? 'border-red-500/60 bg-red-500/10'
+                : 'border-blue-500/60 bg-blue-500/10'
             }`}>
-              <div className="flex items-center justify-between mb-2">
-                <div className={`text-2xl font-bold ${
-                  signal.action === 'BUY' ? 'text-green-400' : 'text-red-400'
-                }`}>
-                  {signal.action}
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`rounded-md px-3 py-1.5 text-xl font-bold ${
+                    signal.action === 'BUY'
+                      ? 'bg-green-500/20 text-green-300'
+                      : signal.action === 'SELL'
+                      ? 'bg-red-500/20 text-red-300'
+                      : 'bg-blue-500/20 text-blue-300'
+                  }`}>
+                    {signal.action}
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Model Confidence</div>
+                    <div className="font-mono text-sm font-semibold text-white">
+                      {(signal.confidence * 100).toFixed(0)}% {signal.bias}
+                      <span className="ml-2 text-slate-500">score {(signal.score * 100).toFixed(0)}</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 text-gray-400">
+                <div className="flex items-center gap-2 text-sm text-gray-400">
                   <Target className="h-4 w-4" />
                   <span>{signal.points.toFixed(1)} points</span>
                 </div>
               </div>
-              
-              <div className="grid grid-cols-3 gap-4 text-sm">
+
+              <div className="mt-3 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
                 <div>
                   <div className="text-gray-400">Entry</div>
                   <div className="font-mono font-bold text-white">
@@ -321,10 +259,10 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
                   </div>
                 </div>
                 <div>
-                  <div className="text-gray-400">Target</div>
+                  <div className="text-gray-400">{signal.action === 'WATCH' ? 'Focus Level' : 'Target'}</div>
                   <div className="font-mono font-bold text-white">
-                    ${roundFigures ? signal.target.toFixed(0) : signal.target.toFixed(2)}
-                    {futuresSpread > 0 && (
+                    {signal.target === undefined ? 'N/A' : `$${roundFigures ? signal.target.toFixed(0) : signal.target.toFixed(2)}`}
+                    {signal.target !== undefined && futuresSpread > 0 && (
                       <div className="text-blue-400 text-xs mt-1">
                         [${roundFigures ? (signal.target + futuresSpread).toFixed(0) : (signal.target + futuresSpread).toFixed(2)}]
                       </div>
@@ -344,11 +282,35 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
                     </div>
                   </div>
                 )}
+                <div>
+                  <div className="text-gray-400">Support</div>
+                  <div className="font-mono font-bold text-white">{formatPremium(signal.premium)}</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    Bull {(signal.bullishScore * 100).toFixed(0)} / Bear {(signal.bearishScore * 100).toFixed(0)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {signal.reasons.slice(0, 4).map(reason => (
+                  <span key={reason} className="rounded-md bg-slate-950/50 px-2 py-1 text-xs text-slate-300">
+                    {reason}
+                  </span>
+                ))}
               </div>
             </div>
           )}
 
           <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => toggleSort('score')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
+                sortField === 'score' ? 'bg-blue-500 text-white' : 'bg-slate-700 text-gray-300'
+              }`}
+            >
+              <span>Signal Score</span>
+              <ArrowUpDown className="h-4 w-4" />
+            </button>
             <button
               onClick={() => toggleSort('distance')}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
@@ -399,7 +361,7 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
             className="grid items-center gap-3 border-b border-slate-700 bg-slate-950/40 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
             style={{ gridTemplateColumns: '56px minmax(150px, 1.1fr) minmax(145px, 0.9fr) minmax(120px, 0.8fr) minmax(180px, 1fr) 92px' }}
           >
-            <div>Rank</div>
+            <div>Score</div>
             <div>Level</div>
             <div>Trigger</div>
             <div>Distance</div>
@@ -421,8 +383,9 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
                   className="grid min-h-[68px] items-center gap-3 px-4 py-3 transition-colors hover:bg-slate-800/70"
                   style={{ gridTemplateColumns: '56px minmax(150px, 1.1fr) minmax(145px, 0.9fr) minmax(120px, 0.8fr) minmax(180px, 1fr) 92px' }}
                 >
-                  <div className="font-mono text-xs font-semibold text-slate-500">
-                    #{index + 1}
+                  <div className="font-mono text-xs font-semibold text-slate-300">
+                    {(sentiment.score * 100).toFixed(0)}
+                    <div className="text-[10px] text-slate-600">#{index + 1}</div>
                   </div>
 
                   <div className="min-w-0">
@@ -437,7 +400,7 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
                       )}
                     </div>
                     <div className="mt-1 text-xs text-slate-400">
-                      Breakeven level
+                      {Math.round(sentiment.confidence * 100)}% directional
                     </div>
                   </div>
 
@@ -499,6 +462,7 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="font-mono text-lg font-bold text-white">${formatLevel(sentiment.level)}</div>
+                  <div className="mt-0.5 font-mono text-xs text-slate-500">Score {(sentiment.score * 100).toFixed(0)}</div>
                   {futuresSpread > 0 && (
                     <div className="font-mono text-sm text-blue-300">ES ${formatLevel(sentiment.level + futuresSpread)}</div>
                   )}
