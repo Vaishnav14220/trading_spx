@@ -18,11 +18,20 @@ export interface AuthConfig {
 
 export class CapitalAuthService {
   private tokens: SessionTokens | null = null;
+  private tokenRequest: Promise<SessionTokens> | null = null;
   private config: AuthConfig | null = null;
 
   setConfig(config: AuthConfig) {
+    const isSameConfig = this.config?.apiKey === config.apiKey &&
+      this.config?.identifier === config.identifier &&
+      this.config?.password === config.password;
+
     this.config = config;
-    this.tokens = null; // Clear existing tokens when config changes
+
+    if (!isSameConfig) {
+      this.tokens = null; // Clear existing tokens when config changes
+      this.tokenRequest = null;
+    }
   }
 
   async createSession(): Promise<SessionTokens> {
@@ -50,7 +59,7 @@ export class CapitalAuthService {
           );
         }
 
-        const tokens = await response.json();
+        const tokens = await response.json() as SessionTokens;
         console.log('[Auth] Tokens received:', {
           hasCst: !!tokens.cst,
           hasSecurityToken: !!tokens.securityToken,
@@ -58,7 +67,7 @@ export class CapitalAuthService {
         
         this.tokens = tokens;
         console.log('[Auth] Session created successfully via Netlify Function');
-        return this.tokens;
+        return tokens;
       } else {
         // Local development - use localStorage credentials
         if (!this.config) {
@@ -101,8 +110,16 @@ export class CapitalAuthService {
   }
 
   async getValidTokens(): Promise<SessionTokens> {
+    if (this.tokens) {
+      return this.tokens;
+    }
+
+    if (this.tokenRequest) {
+      return this.tokenRequest;
+    }
+
     // If we don't have tokens, create a new session
-    if (!this.tokens) {
+    this.tokenRequest = (async () => {
       // On Netlify, check if tokens are cached in sessionStorage to avoid rate limiting
       if (isNetlify && typeof sessionStorage !== 'undefined') {
         const cached = sessionStorage.getItem('capital_tokens');
@@ -113,8 +130,9 @@ export class CapitalAuthService {
             // Use cached tokens if less than 5 minutes old
             if (age < 5 * 60 * 1000) {
               console.log('[Auth] Using cached tokens');
-              this.tokens = { cst: parsed.cst, securityToken: parsed.securityToken };
-              return this.tokens;
+              const cachedTokens = { cst: parsed.cst, securityToken: parsed.securityToken };
+              this.tokens = cachedTokens;
+              return cachedTokens;
             }
           } catch (e) {
             console.error('[Auth] Failed to parse cached tokens:', e);
@@ -133,12 +151,18 @@ export class CapitalAuthService {
       }
       
       return tokens;
+    })();
+
+    try {
+      return await this.tokenRequest;
+    } finally {
+      this.tokenRequest = null;
     }
-    return this.tokens;
   }
 
   clearTokens() {
     this.tokens = null;
+    this.tokenRequest = null;
   }
 
   hasConfig(): boolean {

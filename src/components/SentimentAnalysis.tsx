@@ -3,6 +3,7 @@ import { OptionTrade } from '../types/options';
 import { ArrowUpCircle, ArrowDownCircle, ArrowUpDown, TrendingUp, TrendingDown, Target, Copy, CopyCheck } from 'lucide-react';
 import TradesModal from './TradesModal';
 import SentimentHistogram from './SentimentHistogram';
+import TradeContextTable from './TradeContextTable';
 
 const DELTA_THRESHOLD = 0.64;
 const COPY_DELTA_THRESHOLD = 0.64;
@@ -244,6 +245,16 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
     );
   }
 
+  const maxSentimentPremium = Math.max(...sentiments.map(s => Math.abs(s.totalPremium)), 1);
+  const formatLevel = (value: number) => roundFigures ? value.toFixed(0) : value.toFixed(2);
+  const formatPremium = (value: number) => {
+    const absValue = Math.abs(value);
+
+    if (absValue >= 1_000_000) return `$${(absValue / 1_000_000).toFixed(1)}M`;
+    if (absValue >= 1_000) return `$${(absValue / 1_000).toFixed(1)}K`;
+    return `$${absValue.toFixed(0)}`;
+  };
+
   return (
     <>
       <div className="bg-slate-900 rounded-lg p-4 w-full">
@@ -381,83 +392,134 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
 
         <SentimentHistogram trades={trades} currentPrice={currentPrice} futuresSpread={futuresSpread} roundFigures={roundFigures} />
 
-        <div className="space-y-3">
-          {sentiments.map((sentiment, index) => (
-            <div 
-              key={index} 
-              className="relative bg-slate-800 rounded-lg p-4 border border-slate-700"
-            >
-              <div 
-                className="absolute top-0 bottom-0 left-0 opacity-10 transition-all duration-300"
-                style={{
-                  width: `${(Math.abs(sentiment.totalPremium) / Math.max(...sentiments.map(s => Math.abs(s.totalPremium)))) * 100}%`,
-                  backgroundColor: sentiment.direction === 'above' ? '#22C55E' : '#EF4444'
-                }}
-              />
-              
-              <div className="relative">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-4">
-                    <div className="flex flex-col">
-                      <span className="font-mono text-2xl font-bold text-white">
-                        ${roundFigures ? sentiment.level.toFixed(0) : sentiment.level.toFixed(2)}
-                        {futuresSpread > 0 && (
-                          <span className="text-blue-400 text-lg ml-2">
-                            [${roundFigures ? (sentiment.level + futuresSpread).toFixed(0) : (sentiment.level + futuresSpread).toFixed(2)}]
-                          </span>
-                        )}
+        <TradeContextTable trades={trades} roundFigures={roundFigures} />
+
+        <div className="mt-4 hidden overflow-hidden rounded-lg border border-slate-700 bg-slate-900 lg:block">
+          <div
+            className="grid items-center gap-3 border-b border-slate-700 bg-slate-950/40 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+            style={{ gridTemplateColumns: '56px minmax(150px, 1.1fr) minmax(145px, 0.9fr) minmax(120px, 0.8fr) minmax(180px, 1fr) 92px' }}
+          >
+            <div>Rank</div>
+            <div>Level</div>
+            <div>Trigger</div>
+            <div>Distance</div>
+            <div className="text-right">Premium</div>
+            <div className="text-right">Trades</div>
+          </div>
+
+          <div className="divide-y divide-slate-800">
+            {sentiments.map((sentiment, index) => {
+              const isBullish = sentiment.direction === 'above';
+              const distanceLabel = sentiment.distance < 0
+                ? `${Math.abs(sentiment.distance).toFixed(2)} below`
+                : `${sentiment.distance.toFixed(2)} above`;
+              const premiumWidth = (Math.abs(sentiment.totalPremium) / maxSentimentPremium) * 100;
+
+              return (
+                <div
+                  key={`${sentiment.level}-${sentiment.direction}-${index}`}
+                  className="grid min-h-[68px] items-center gap-3 px-4 py-3 transition-colors hover:bg-slate-800/70"
+                  style={{ gridTemplateColumns: '56px minmax(150px, 1.1fr) minmax(145px, 0.9fr) minmax(120px, 0.8fr) minmax(180px, 1fr) 92px' }}
+                >
+                  <div className="font-mono text-xs font-semibold text-slate-500">
+                    #{index + 1}
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="font-mono text-xl font-bold text-white">
+                        ${formatLevel(sentiment.level)}
                       </span>
-                      <span className="text-sm text-gray-400">Breakeven {futuresSpread > 0 && <span className="text-blue-400">[Futures]</span>}</span>
+                      {futuresSpread > 0 && (
+                        <span className="font-mono text-sm font-semibold text-blue-300">
+                          ES ${formatLevel(sentiment.level + futuresSpread)}
+                        </span>
+                      )}
                     </div>
-                    <div className="flex flex-col gap-1">
-                      <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${
-                        sentiment.direction === 'above' 
-                          ? 'bg-green-500/20 text-green-400' 
-                          : 'bg-red-500/20 text-red-400'
-                      }`}>
-                        {sentiment.direction === 'above' ? (
-                          <>
-                            <ArrowUpCircle className="h-4 w-4" />
-                            <span className="font-semibold">Close Above</span>
-                          </>
-                        ) : (
-                          <>
-                            <ArrowDownCircle className="h-4 w-4" />
-                            <span className="font-semibold">Close Below</span>
-                          </>
-                        )}
-                      </div>
-                      <div className={`flex items-center gap-2 text-sm ${
-                        sentiment.distance < 0 ? 'text-green-400' : 'text-red-400'
-                      }`}>
-                        {sentiment.distance < 0 ? (
-                          <>
-                            <TrendingUp className="h-4 w-4" />
-                            <span>{Math.abs(sentiment.distance).toFixed(2)} below</span>
-                          </>
-                        ) : (
-                          <>
-                            <TrendingDown className="h-4 w-4" />
-                            <span>{sentiment.distance.toFixed(2)} above</span>
-                          </>
-                        )}
-                      </div>
+                    <div className="mt-1 text-xs text-slate-400">
+                      Breakeven level
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <span className={`font-mono text-xl font-bold ${
-                      sentiment.totalPremium > 0 ? 'text-green-400' : 'text-red-400'
+
+                  <div>
+                    <div className={`inline-flex items-center gap-2 rounded-md px-2.5 py-1 text-sm font-semibold ${
+                      isBullish
+                        ? 'bg-green-500/15 text-green-300'
+                        : 'bg-red-500/15 text-red-300'
                     }`}>
-                      ${Math.abs(sentiment.totalPremium).toLocaleString()}
-                    </span>
+                      {isBullish ? <ArrowUpCircle className="h-4 w-4" /> : <ArrowDownCircle className="h-4 w-4" />}
+                      <span>{isBullish ? 'Close Above' : 'Close Below'}</span>
+                    </div>
+                  </div>
+
+                  <div className={`flex items-center gap-2 text-sm font-medium ${
+                    sentiment.distance < 0 ? 'text-green-300' : 'text-red-300'
+                  }`}>
+                    {sentiment.distance < 0 ? (
+                      <TrendingUp className="h-4 w-4" />
+                    ) : (
+                      <TrendingDown className="h-4 w-4" />
+                    )}
+                    <span>{distanceLabel}</span>
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="mb-1 flex items-center justify-end">
+                      <span className="font-mono text-lg font-bold text-green-300">
+                        {formatPremium(sentiment.totalPremium)}
+                      </span>
+                    </div>
+                    <div className="flex h-1.5 justify-end rounded-full bg-slate-950/70">
+                      <div
+                        className={`h-full rounded-full ${isBullish ? 'bg-green-400' : 'bg-red-400'}`}
+                        style={{ width: `${premiumWidth}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="text-right">
                     <button
                       onClick={() => handleTradesClick(sentiment.level)}
-                      className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
+                      className="rounded-md px-2 py-1 text-sm font-medium text-blue-300 transition-colors hover:bg-blue-500/10 hover:text-blue-200"
                     >
                       {sentiment.trades.length} trade{sentiment.trades.length !== 1 ? 's' : ''}
                     </button>
                   </div>
                 </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-3 lg:hidden">
+          {sentiments.map((sentiment, index) => (
+            <div
+              key={`mobile-${sentiment.level}-${index}`}
+              className="rounded-lg border border-slate-700 bg-slate-800 p-3"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-mono text-lg font-bold text-white">${formatLevel(sentiment.level)}</div>
+                  {futuresSpread > 0 && (
+                    <div className="font-mono text-sm text-blue-300">ES ${formatLevel(sentiment.level + futuresSpread)}</div>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className="font-mono text-base font-bold text-green-300">{formatPremium(sentiment.totalPremium)}</div>
+                  <button
+                    onClick={() => handleTradesClick(sentiment.level)}
+                    className="text-sm text-blue-300"
+                  >
+                    {sentiment.trades.length} trade{sentiment.trades.length !== 1 ? 's' : ''}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-2 text-sm">
+                <span className={sentiment.direction === 'above' ? 'text-green-300' : 'text-red-300'}>
+                  {sentiment.direction === 'above' ? 'Close Above' : 'Close Below'}
+                </span>
+                <span className={sentiment.distance < 0 ? 'text-green-300' : 'text-red-300'}>
+                  {sentiment.distance < 0 ? `${Math.abs(sentiment.distance).toFixed(2)} below` : `${sentiment.distance.toFixed(2)} above`}
+                </span>
               </div>
             </div>
           ))}

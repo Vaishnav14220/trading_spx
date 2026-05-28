@@ -18,6 +18,10 @@ import CapitalSettings from './components/CapitalSettings';
 import ProcessOptionsWidget from './components/ProcessOptionsWidget';
 import FlowChart from './components/FlowChart';
 import { extractDate } from './utils/dateUtils';
+import { DEFAULT_SPOT_EPIC, getStoredFuturesEpic } from './utils/marketDefaults';
+
+const HISTORICAL_DAYS = 5;
+const HISTORICAL_FETCH_TIMEOUT_MS = 60000;
 
 const App: React.FC = () => {
   const [stockData, setStockData] = useState<ChartData[]>([]);
@@ -151,36 +155,6 @@ const App: React.FC = () => {
     }
   };
 
-  const _handleMarketSelection = (spotEpic: string, futuresEpic: string) => {
-    console.log('[App] Markets selected:', { spotEpic, futuresEpic });
-    
-    if (useRealtime) {
-      // Reconnect WebSocket with new EPICs
-      const futuresWS = getFuturesWebSocketService();
-      futuresWS.disconnect();
-      
-      setTimeout(() => {
-        futuresWS.connect(
-          (data) => {
-            setFuturesSpread(data);
-            // setFuturesError('');
-            // Flash animation on update
-            setFuturesUpdateFlash(true);
-            setTimeout(() => setFuturesUpdateFlash(false), 300);
-          },
-          (connected) => {
-            setFuturesConnected(connected);
-          },
-          spotEpic,
-          futuresEpic
-        );
-      }, 100);
-    } else {
-      // Reload via REST API
-      loadFuturesSpread();
-    }
-  };
-
   // Check if credentials are already saved on mount
   useEffect(() => {
     const authService = getAuthService();
@@ -189,11 +163,9 @@ const App: React.FC = () => {
     }
     
     // Set default futures EPIC if not already set
-    if (!localStorage.getItem('market_futures_epic')) {
-      localStorage.setItem('market_futures_epic', 'ESZ2025');
-    }
+    getStoredFuturesEpic();
     if (!localStorage.getItem('market_spot_epic')) {
-      localStorage.setItem('market_spot_epic', 'US500');
+      localStorage.setItem('market_spot_epic', DEFAULT_SPOT_EPIC);
     }
   }, []);
 
@@ -206,8 +178,8 @@ const App: React.FC = () => {
       // Then connect to WebSocket for real-time updates
       const futuresWS = getFuturesWebSocketService();
       
-      const spotEpic = localStorage.getItem('market_spot_epic') || 'US500';
-      const futuresEpic = localStorage.getItem('market_futures_epic') || 'ESZ2025';
+      const spotEpic = localStorage.getItem('market_spot_epic') || DEFAULT_SPOT_EPIC;
+      const futuresEpic = getStoredFuturesEpic();
       
       console.log('[App] Connecting to futures WebSocket...');
       
@@ -246,15 +218,15 @@ const App: React.FC = () => {
       const initializeRealtime = async () => {
         try {
           setLoading(true);
-          setError('Loading historical data (3 days)...');
+          setError(`Loading historical data (${HISTORICAL_DAYS} days)...`);
           
           let historicalData: ChartData[] = [];
           
           try {
-            // Try to fetch 3 days of historical data with timeout
-            const fetchPromise = fetchCapitalHistoricalData(3);
+            // Fetch historical data with a timeout so live data can still start if history is unavailable.
+            const fetchPromise = fetchCapitalHistoricalData(HISTORICAL_DAYS);
             const timeoutPromise = new Promise<ChartData[]>((_, reject) => 
-              setTimeout(() => reject(new Error('Timeout')), 30000) // 30 second timeout
+              setTimeout(() => reject(new Error('Timeout')), HISTORICAL_FETCH_TIMEOUT_MS)
             );
             
             historicalData = await Promise.race([fetchPromise, timeoutPromise]);
@@ -481,6 +453,10 @@ const App: React.FC = () => {
         </div>
 
         <div className="space-y-6">
+          {filteredTrades.length > 0 && (
+            <FlowChart trades={filteredTrades} />
+          )}
+
           <div className="w-full">
             {loading && !stockData.length ? (
               <div className="flex flex-col items-center justify-center h-96 rounded-lg" style={{ background: '#131722' }}>
@@ -499,6 +475,7 @@ const App: React.FC = () => {
                   trades={filteredTrades}
                   futuresSpread={futuresSpread?.spread || 0}
                   roundFigures={roundFigures}
+                  historyDays={HISTORICAL_DAYS}
                 />
               )
             )}
@@ -517,7 +494,7 @@ const App: React.FC = () => {
         <div className="text-sm text-gray-400 text-center">
           {useRealtime && stockData.length > 0 && (
             <span className="mr-4">
-              📊 Showing {stockData.length} candles {stockData.length > 500 ? '(3 days historical + live)' : '(live data)'}
+              📊 Showing {stockData.length} candles {stockData.length > 500 ? `(${HISTORICAL_DAYS} days historical + live)` : '(live data)'}
             </span>
           )}
           Last updated: {lastUpdate.toLocaleTimeString()}
@@ -528,11 +505,6 @@ const App: React.FC = () => {
             <h2 className="text-2xl font-bold text-white mb-4">Process Options Data</h2>
             <OptionsInput onSubmit={handleOptionsSubmit} />
           </div>
-          
-          {/* Flow Chart */}
-          {filteredTrades.length > 0 && (
-            <FlowChart trades={filteredTrades} />
-          )}
           
           <div className="space-y-6">
             <OptionsSummary summary={optionsData.summary} />

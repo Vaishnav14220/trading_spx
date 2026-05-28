@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { searchMarkets, Market } from '../services/marketSearch';
 import { Search, X } from 'lucide-react';
+import { DEFAULT_SPOT_EPIC, getDefaultFuturesEpic } from '../utils/marketDefaults';
 
 interface MarketSelectorProps {
   onSelectMarket: (spotEpic: string, futuresEpic: string) => void;
@@ -10,8 +11,8 @@ interface MarketSelectorProps {
 
 const MarketSelector: React.FC<MarketSelectorProps> = ({ 
   onSelectMarket,
-  currentSpotEpic = 'US500',
-  currentFuturesEpic = 'ESZ2025'
+  currentSpotEpic = DEFAULT_SPOT_EPIC,
+  currentFuturesEpic = getDefaultFuturesEpic()
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('US500');
@@ -206,4 +207,3 @@ const MarketSelector: React.FC<MarketSelectorProps> = ({
 };
 
 export default MarketSelector;
-

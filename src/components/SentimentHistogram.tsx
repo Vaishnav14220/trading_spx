@@ -17,9 +17,32 @@ interface IntervalSentiment {
   bullishPercentage: number;
 }
 
+const gridTemplateColumns = '42px minmax(90px, 118px) minmax(0, 1fr) 54px minmax(0, 1fr) 78px';
+
+const formatPremium = (premium: number): string => {
+  if (premium >= 1_000_000) {
+    return `$${(premium / 1_000_000).toFixed(1)}M`;
+  }
+
+  if (premium >= 1_000) {
+    return `$${(premium / 1_000).toFixed(1)}K`;
+  }
+
+  return `$${premium.toFixed(0)}`;
+};
+
+const formatDistance = (distance: number): string => {
+  if (Math.abs(distance) < 0.5) {
+    return 'at spot';
+  }
+
+  return `${distance > 0 ? '+' : ''}${distance.toFixed(0)} pts`;
+};
+
 const SentimentHistogram: React.FC<SentimentHistogramProps> = ({ trades, currentPrice, futuresSpread = 0, roundFigures = false }) => {
+  const intervalSize = roundFigures ? 1 : 5;
+
   const sentimentData = useMemo(() => {
-    const intervalSize = roundFigures ? 1 : 5;
     const uniqueBreakevens = [...new Set(trades.map(t => {
       const breakevenValue = roundFigures ? Math.round(t.breakeven) : t.breakeven;
       return Math.round(breakevenValue / intervalSize) * intervalSize;
@@ -42,12 +65,6 @@ const SentimentHistogram: React.FC<SentimentHistogramProps> = ({ trades, current
       const [bid, ask] = trade.bidAsk.split('x').map(p => parseFloat(p));
       const midPrice = (bid + ask) / 2;
       const isBuy = trade.price >= midPrice;
-      
-      // Determine if the trade is bullish:
-      // - Buying calls = bullish
-      // - Selling puts = bullish
-      // - Selling calls = bearish
-      // - Buying puts = bearish
       const isBullish = (trade.type === 'C' && isBuy) || (trade.type === 'P' && !isBuy);
       
       const premium = trade.price * trade.quantity * 100;
@@ -72,134 +89,168 @@ const SentimentHistogram: React.FC<SentimentHistogramProps> = ({ trades, current
           ? (interval.bullishPremium / interval.totalPremium) * 100 
           : 0
       }))
-      .sort((a, b) => b.startPrice - a.startPrice);
-  }, [trades, currentPrice, roundFigures]);
+      .sort((a, b) => b.totalPremium - a.totalPremium);
+  }, [trades, intervalSize, roundFigures]);
 
-  const maxPremium = Math.max(...sentimentData.map(d => Math.max(d.bullishPremium, d.bearishPremium)));
-
-  const formatPremium = (premium: number): string => {
-    if (premium >= 1_000_000) {
-      return `$${(premium / 1_000_000).toFixed(1)}M`;
-    } else if (premium >= 1_000) {
-      return `$${(premium / 1_000).toFixed(1)}K`;
-    }
-    return `$${premium.toFixed(0)}`;
-  };
-
-  // Sort all data by total premium (highest at top) 
-  const sortedData = useMemo(() => {
-    return [...sentimentData].sort((a, b) => b.totalPremium - a.totalPremium);
-  }, [sentimentData]);
+  const maxPremium = Math.max(1, ...sentimentData.map(d => Math.max(d.bullishPremium, d.bearishPremium)));
+  const totalBullish = sentimentData.reduce((sum, item) => sum + item.bullishPremium, 0);
+  const totalBearish = sentimentData.reduce((sum, item) => sum + item.bearishPremium, 0);
+  const totalPremium = totalBullish + totalBearish;
+  const netBullishPercent = totalPremium > 0 ? (totalBullish / totalPremium) * 100 : 0;
+  const closestLevel = sentimentData.reduce<IntervalSentiment | null>((closest, item) => {
+    if (!closest) return item;
+    return Math.abs(item.startPrice - currentPrice) < Math.abs(closest.startPrice - currentPrice) ? item : closest;
+  }, null);
 
   return (
-    <div className="bg-slate-800 rounded-lg p-4 mt-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-base font-semibold text-white">
-          Premium Distribution (All {sortedData.length} Levels - Sorted by Total Premium)
-        </h3>
-        <div className="flex items-center gap-3 text-xs">
-          <div className="flex items-center gap-1.5">
-            <div className="w-2.5 h-2.5 bg-red-500 rounded-sm" />
-            <span className="text-gray-400">Bearish</span>
+    <div className="mt-4 overflow-hidden rounded-lg border border-slate-700/70 bg-slate-900">
+      <div className="flex flex-col gap-3 border-b border-slate-700/70 bg-slate-950/40 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h3 className="text-base font-semibold text-white">Premium Distribution</h3>
+          <div className="mt-1 text-xs text-slate-400">
+            {sentimentData.length.toLocaleString()} levels sorted by total premium
           </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-2.5 h-2.5 bg-green-500 rounded-sm" />
-            <span className="text-gray-400">Bullish</span>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-right text-xs">
+          <div className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2">
+            <div className="text-slate-400">Bearish</div>
+            <div className="font-mono font-semibold text-red-300">{formatPremium(totalBearish)}</div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-2.5 h-2.5 bg-yellow-500 rounded-sm" />
-            <span className="text-gray-400">Current Price</span>
+          <div className="rounded-md border border-green-500/20 bg-green-500/10 px-3 py-2">
+            <div className="text-slate-400">Bullish</div>
+            <div className="font-mono font-semibold text-green-300">{formatPremium(totalBullish)}</div>
+          </div>
+          <div className="rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2">
+            <div className="text-slate-400">Bias</div>
+            <div className={`font-mono font-semibold ${netBullishPercent >= 50 ? 'text-green-300' : 'text-red-300'}`}>
+              {netBullishPercent.toFixed(0)}%
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="relative w-full space-y-1 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
-        {sortedData.map((data, index) => {
-          const bullishWidth = (data.bullishPremium / maxPremium) * 100;
-          const bearishWidth = (data.bearishPremium / maxPremium) * 100;
-          const containsCurrentPrice = currentPrice >= data.startPrice && currentPrice < data.endPrice;
+      <div className="border-b border-yellow-500/20 bg-yellow-500/5 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="font-mono text-sm font-bold text-yellow-300">
+            Current Price: ${roundFigures ? currentPrice.toFixed(0) : currentPrice.toFixed(2)}
+            {futuresSpread > 0 && (
+              <span className="ml-3 text-blue-300">
+                Futures ${roundFigures ? (currentPrice + futuresSpread).toFixed(0) : (currentPrice + futuresSpread).toFixed(2)}
+              </span>
+            )}
+          </div>
+          {closestLevel && (
+            <div className="text-xs text-slate-400">
+              Nearest level: <span className="font-mono text-slate-200">${closestLevel.startPrice.toFixed(0)}</span>
+            </div>
+          )}
+        </div>
+      </div>
 
-          return (
-            <div 
-              key={index} 
-              className={`flex items-center gap-2 h-7 px-2 rounded transition-all ${
-                containsCurrentPrice ? 'bg-yellow-500/20 ring-1 ring-yellow-500/50 scale-105' : 'hover:bg-slate-700/50'
-              }`}
-            >
-              <div className="w-8 text-right text-xs text-gray-500 font-medium">
-                #{index + 1}
-              </div>
-              
-              <div 
-                className={`min-w-[130px] text-right font-mono font-bold flex items-center justify-end gap-2 ${
-                  containsCurrentPrice ? 'text-yellow-400' : 'text-gray-300'
+      <div className="max-h-[560px] overflow-y-auto overflow-x-hidden pr-1 sentiment-scrollbar">
+        <div
+          className="sticky top-0 z-10 grid items-center gap-2 border-b border-slate-700/70 bg-slate-900 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+          style={{ gridTemplateColumns }}
+        >
+          <div>#</div>
+          <div>Level</div>
+          <div className="text-right">Bearish</div>
+          <div className="text-center">Bias</div>
+          <div>Bullish</div>
+          <div className="text-right">Total</div>
+        </div>
+
+        <div className="divide-y divide-slate-800/80">
+          {sentimentData.map((data, index) => {
+            const bullishWidth = Math.max(2, (data.bullishPremium / maxPremium) * 100);
+            const bearishWidth = Math.max(2, (data.bearishPremium / maxPremium) * 100);
+            const containsCurrentPrice = currentPrice >= data.startPrice && currentPrice < data.endPrice;
+            const distance = data.startPrice - currentPrice;
+            const futuresLevel = data.startPrice + futuresSpread;
+            const dominantSide = data.bullishPremium >= data.bearishPremium ? 'bullish' : 'bearish';
+
+            return (
+              <div
+                key={data.startPrice}
+                className={`grid min-h-11 items-center gap-2 px-3 py-2 transition-colors ${
+                  containsCurrentPrice
+                    ? 'bg-yellow-500/10 ring-1 ring-inset ring-yellow-400/40'
+                    : 'hover:bg-slate-800/70'
                 }`}
+                style={{ gridTemplateColumns }}
               >
-                <div className="text-xs">
-                  $<span className="text-base">{data.startPrice.toFixed(0)}</span>
-                </div>
-                {futuresSpread > 0 && (
-                  <div className="text-blue-400 text-[10px]">
-                    [<span className="text-xs">${(data.startPrice + futuresSpread).toFixed(0)}</span>]
-                  </div>
-                )}
-              </div>
+                <div className="text-xs font-medium text-slate-500">#{index + 1}</div>
 
-              <div className="flex-1 flex items-center gap-1">
-                <div className="flex-1 flex justify-end items-center gap-1">
-                  <div className="text-xs text-red-400 font-medium min-w-[45px] text-right">
+                <div className="min-w-0">
+                  <div className={`font-mono text-sm font-bold ${containsCurrentPrice ? 'text-yellow-200' : 'text-slate-100'}`}>
+                    ${data.startPrice.toFixed(0)}
+                  </div>
+                  <div className="truncate text-[11px] text-slate-500">
+                    {formatDistance(distance)}
+                    {futuresSpread > 0 && (
+                      <span className="ml-1 text-blue-300">${futuresLevel.toFixed(0)}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex min-w-0 items-center justify-end gap-2">
+                  <div className="min-w-[52px] text-right font-mono text-[11px] font-semibold text-red-300">
                     {formatPremium(data.bearishPremium)}
                   </div>
-                  <div 
-                    className={`h-4 rounded-sm transition-all duration-300 ${
-                      containsCurrentPrice ? 'bg-yellow-500' : 'bg-red-500/80'
-                    }`}
-                    style={{ width: `${bearishWidth}%` }}
-                  />
-                </div>
-
-                <div className="w-10 text-center">
-                  <div className={`text-xs font-mono font-bold ${
-                    data.bullishPercentage > 50 ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {data.bullishPercentage.toFixed(0)}%
+                  <div className="flex h-5 flex-1 justify-end rounded-sm bg-slate-950/50">
+                    <div
+                      className={`h-full rounded-sm ${dominantSide === 'bearish' ? 'bg-red-400' : 'bg-red-500/55'}`}
+                      style={{ width: `${bearishWidth}%` }}
+                    />
                   </div>
                 </div>
 
-                <div className="flex-1 flex items-center gap-1">
-                  <div 
-                    className={`h-4 rounded-sm transition-all duration-300 ${
-                      containsCurrentPrice ? 'bg-yellow-500' : 'bg-green-500/80'
-                    }`}
-                    style={{ width: `${bullishWidth}%` }}
-                  />
-                  <div className="text-xs text-green-400 font-medium min-w-[45px]">
+                <div className={`rounded-md px-1.5 py-1 text-center font-mono text-[11px] font-bold ${
+                  data.bullishPercentage >= 50
+                    ? 'bg-green-500/10 text-green-300'
+                    : 'bg-red-500/10 text-red-300'
+                }`}>
+                  {data.bullishPercentage.toFixed(0)}%
+                </div>
+
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="h-5 flex-1 rounded-sm bg-slate-950/50">
+                    <div
+                      className={`h-full rounded-sm ${dominantSide === 'bullish' ? 'bg-green-400' : 'bg-green-500/55'}`}
+                      style={{ width: `${bullishWidth}%` }}
+                    />
+                  </div>
+                  <div className="min-w-[52px] font-mono text-[11px] font-semibold text-green-300">
                     {formatPremium(data.bullishPremium)}
                   </div>
                 </div>
-              </div>
 
-              <div className="text-xs text-gray-500 min-w-[50px] text-right font-medium">
-                {formatPremium(data.totalPremium)}
+                <div className="text-right font-mono text-xs font-semibold text-slate-400">
+                  {formatPremium(data.totalPremium)}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
       
       <style>{`
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 6px;
+        .sentiment-scrollbar::-webkit-scrollbar {
+          width: 8px;
         }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: #1e293b;
-          border-radius: 3px;
+
+        .sentiment-scrollbar::-webkit-scrollbar-track {
+          background: #0f172a;
         }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
+
+        .sentiment-scrollbar::-webkit-scrollbar-thumb {
           background: #475569;
-          border-radius: 3px;
+          border: 2px solid #0f172a;
+          border-radius: 999px;
         }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+
+        .sentiment-scrollbar::-webkit-scrollbar-thumb:hover {
           background: #64748b;
         }
       `}</style>

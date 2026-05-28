@@ -8,7 +8,7 @@ To deploy this application on Netlify, you need to configure the following envir
 
 1. **CAPITAL_API_KEY**
    - Your Capital.com API key
-   - Example: `9bP6pGlM0Tt4q7fO`
+   - Example: `your-api-key-here`
 
 2. **CAPITAL_IDENTIFIER**
    - Your Capital.com email/username

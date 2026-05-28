@@ -8,10 +8,10 @@ interface OptionsTableProps {
 }
 
 export const OptionsTable: React.FC<OptionsTableProps> = ({ trades }) => {
-  // const filteredTrades = trades.filter(trade => Math.abs(parseFloat(trade.delta)) > DELTA_THRESHOLD);
+  const highImpactTradeCount = trades.filter(trade => Math.abs(parseFloat(trade.delta)) > DELTA_THRESHOLD).length;
 
   return (
-    <div className="overflow-x-auto bg-slate-900 rounded-lg p-4">
+    <div className="overflow-x-auto bg-slate-900 rounded-lg p-4" title={`${highImpactTradeCount} high impact trades`}>
       <h3 className="text-lg font-semibold text-white mb-4">
         High Impact Trades (|Δ| &gt; {DELTA_THRESHOLD})
       </h3>

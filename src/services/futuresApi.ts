@@ -1,12 +1,13 @@
 import { getAuthService, BASE_URL } from './capitalAuth';
+import { DEFAULT_SPOT_EPIC, getStoredFuturesEpic } from '../utils/marketDefaults';
 
 // Get EPICs from localStorage or use defaults
 function getSpotEpic(): string {
-  return localStorage.getItem('market_spot_epic') || 'US500';
+  return localStorage.getItem('market_spot_epic') || DEFAULT_SPOT_EPIC;
 }
 
 function getFuturesEpic(): string {
-  return localStorage.getItem('market_futures_epic') || 'ESZ2025';
+  return getStoredFuturesEpic();
 }
 
 interface MarketDetails {
@@ -61,15 +62,18 @@ export async function fetchFuturesSpread(): Promise<FuturesSpreadData> {
 
     console.log(`[Futures API] Using Spot: ${spotEpic}, Futures: ${futuresEpic}`);
 
-    // Fetch both spot and futures prices
-    const [spotData, futuresData] = await Promise.all([
-      fetchMarketData(spotEpic, tokens),
-      fetchMarketData(futuresEpic, tokens),
-    ]);
+    const spotData = await fetchMarketData(spotEpic, tokens);
+    let futuresData: MarketDetails | null = null;
+
+    try {
+      futuresData = await fetchMarketData(futuresEpic, tokens);
+    } catch (error) {
+      console.warn(`[Futures API] Futures epic ${futuresEpic} unavailable. Spread widget will use spot as fallback.`, error);
+    }
 
     // Use mid price (average of bid and offer)
     const spotPrice = (spotData.bid + spotData.offer) / 2;
-    const futuresPrice = (futuresData.bid + futuresData.offer) / 2;
+    const futuresPrice = futuresData ? (futuresData.bid + futuresData.offer) / 2 : spotPrice;
     const spread = futuresPrice - spotPrice;
     const spreadPercent = (spread / spotPrice) * 100;
 
@@ -89,4 +93,3 @@ export async function fetchFuturesSpread(): Promise<FuturesSpreadData> {
     throw error;
   }
 }
-

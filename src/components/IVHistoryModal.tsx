@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
 import { X } from 'lucide-react';
-import { createChart, IChartApi } from 'lightweight-charts';
+import { createChart, HistogramData, IChartApi, LineData, UTCTimestamp } from 'lightweight-charts';
 import { OptionTrade } from '../types/options';
+import { formatChartTickLocal, formatChartTimeLocal } from '../utils/chartTime';
 
 interface IVHistoryModalProps {
   isOpen: boolean;
@@ -13,6 +14,7 @@ interface IVHistoryModalProps {
 const IVHistoryModal: React.FC<IVHistoryModalProps> = ({ isOpen, onClose, trades, contract }) => {
   const chartContainerRef = React.useRef<HTMLDivElement>(null);
   const chartRef = React.useRef<IChartApi | null>(null);
+  const toChartTime = (time: number): UTCTimestamp => time as UTCTimestamp;
 
   const filteredTrades = useMemo(() => {
     const tradeMap = new Map();
@@ -49,6 +51,15 @@ const IVHistoryModal: React.FC<IVHistoryModalProps> = ({ isOpen, onClose, trades
       },
       width: chartContainerRef.current.clientWidth,
       height: 400,
+      localization: {
+        locale: navigator.language,
+        timeFormatter: formatChartTimeLocal,
+      },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: formatChartTickLocal,
+      },
       rightPriceScale: {
         scaleMargins: {
           top: 0.1,
@@ -84,21 +95,17 @@ const IVHistoryModal: React.FC<IVHistoryModalProps> = ({ isOpen, onClose, trades
         type: 'volume',
       },
       priceScaleId: 'volume',
+    });
+    chart.priceScale('volume').applyOptions({
       scaleMargins: {
-        top: 0.85, // Move volume bars more to the bottom
+        top: 0.85,
         bottom: 0,
-      },
-      priceScale: {
-        scaleMargins: {
-          top: 0.85,
-          bottom: 0,
-        },
       },
     });
 
     // Format data
-    const ivData = filteredTrades.map(trade => ({
-      time: trade.uniqueTimestamp / 1000,
+    const ivData: LineData[] = filteredTrades.map(trade => ({
+      time: toChartTime(trade.uniqueTimestamp / 1000),
       value: parseFloat(trade.iv) / 100,
     }));
 
@@ -106,8 +113,8 @@ const IVHistoryModal: React.FC<IVHistoryModalProps> = ({ isOpen, onClose, trades
     const maxVolume = Math.max(...filteredTrades.map(t => t.quantity));
     const volumeScale = maxVolume > 1000 ? 0.1 : 0.3; // Adjust scale based on volume size
 
-    const volumeData = filteredTrades.map(trade => ({
-      time: trade.uniqueTimestamp / 1000,
+    const volumeData: HistogramData[] = filteredTrades.map(trade => ({
+      time: toChartTime(trade.uniqueTimestamp / 1000),
       value: trade.quantity * volumeScale, // Scale down the volume bars
       color: trade.quantity > 100 ? 'rgba(52, 211, 153, 0.3)' : 'rgba(96, 165, 250, 0.3)', // More transparent
     }));

@@ -1,4 +1,5 @@
 import { getAuthService, SessionTokens } from './capitalAuth';
+import { DEFAULT_SPOT_EPIC, getDefaultFuturesEpic } from '../utils/marketDefaults';
 
 const WS_URL = "wss://api-streaming-capital.backend-capital.com/connect";
 
@@ -35,9 +36,10 @@ class FuturesWebSocketService {
   private maxReconnectAttempts = 5;
   private reconnectTimeout: any = null;
   private pingInterval: any = null;
+  private shouldReconnect = false;
   
-  private spotEpic = 'US500';
-  private futuresEpic = 'ESZ2025';
+  private spotEpic = DEFAULT_SPOT_EPIC;
+  private futuresEpic = getDefaultFuturesEpic();
   
   private latestSpotPrice = 0;
   private latestFuturesPrice = 0;
@@ -50,6 +52,7 @@ class FuturesWebSocketService {
   ) {
     if (spotEpic) this.spotEpic = spotEpic;
     if (futuresEpic) this.futuresEpic = futuresEpic;
+    this.shouldReconnect = true;
     
     this.dataCallback = onData;
     this.statusCallback = onStatus;
@@ -82,7 +85,9 @@ class FuturesWebSocketService {
         console.log('[Futures WS] Disconnected');
         this.statusCallback?.(false);
         this.stopPingInterval();
-        this.attemptReconnect();
+        if (this.shouldReconnect) {
+          this.attemptReconnect();
+        }
       };
     } catch (error) {
       console.error('[Futures WS] Connection failed:', error);
@@ -228,6 +233,8 @@ class FuturesWebSocketService {
   }
 
   disconnect() {
+    this.shouldReconnect = false;
+
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -253,4 +260,3 @@ export function getFuturesWebSocketService(): FuturesWebSocketService {
   }
   return futuresWebSocketInstance;
 }
-

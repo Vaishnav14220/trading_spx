@@ -5,9 +5,9 @@
 The error `{"errorCode":"error.invalid.details"}` means the **username/email is incorrect**.
 
 Currently set:
-- **CAPITAL_IDENTIFIER**: `Vvn@#411037` ❌ (This looks like a password, not an email/username)
-- **CAPITAL_PASSWORD**: `Vvn@#411037`
-- **CAPITAL_API_KEY**: `9bP6pGlM0Tt4q7fO`
+- **CAPITAL_IDENTIFIER**: `your-email@example.com`
+- **CAPITAL_PASSWORD**: `your-password`
+- **CAPITAL_API_KEY**: `your-api-key`
 
 ## ✅ What You Need
 
@@ -34,10 +34,10 @@ Once you have your correct email/username, run these commands:
 netlify env:set CAPITAL_IDENTIFIER "your-actual-email@example.com"
 
 # Verify password is correct
-netlify env:set CAPITAL_PASSWORD "Vvn@#411037"
+netlify env:set CAPITAL_PASSWORD "your-password"
 
 # Verify API key is correct
-netlify env:set CAPITAL_API_KEY "9bP6pGlM0Tt4q7fO"
+netlify env:set CAPITAL_API_KEY "your-api-key"
 
 # Redeploy
 netlify deploy --prod

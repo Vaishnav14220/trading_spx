@@ -23,9 +23,9 @@ Created two secure backend functions:
 
 #### 2. **Environment Variables**
 Your Capital.com credentials are now securely stored in Netlify:
-- ✅ `CAPITAL_API_KEY` = `9bP6pGlM0Tt4q7fO`
-- ✅ `CAPITAL_IDENTIFIER` = `Vvn@#411037`
-- ✅ `CAPITAL_PASSWORD` = `Vvn@#411037`
+- ✅ `CAPITAL_API_KEY` = configured in Netlify environment variables
+- ✅ `CAPITAL_IDENTIFIER` = configured in Netlify environment variables
+- ✅ `CAPITAL_PASSWORD` = configured in Netlify environment variables
 
 #### 3. **Smart Authentication**
 The app now automatically detects where it's running:
