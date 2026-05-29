@@ -38,16 +38,85 @@ const toLineData = (chartData: ChartData[]): LineData[] =>
     value: d.close,
   }));
 
-const setSeriesData = (
+const toCandlestickPoint = (d: ChartData): CandlestickData => ({
+  time: toChartTime(d.time),
+  open: d.open,
+  high: d.high,
+  low: d.low,
+  close: d.close,
+});
+
+const toLinePoint = (d: ChartData): LineData => ({
+  time: toChartTime(d.time),
+  value: d.close,
+});
+
+const toVolumeData = (chartData: ChartData[]): HistogramData[] =>
+  chartData.map((d, i) => {
+    const prevClose = i > 0 ? chartData[i - 1].close : d.open;
+    const volatility = Math.abs(d.high - d.low);
+    const body = Math.abs(d.close - d.open);
+    const volume = Math.max(1, Math.round((volatility + body) * 10000 + (i % 13) * 250));
+
+    return {
+      time: toChartTime(d.time),
+      value: volume,
+      color: d.close >= prevClose ? '#26a69a80' : '#ef535080',
+    };
+  });
+
+interface SeriesDataState {
+  type: 'candlestick' | 'line';
+  length: number;
+  firstTime: number;
+  lastTime: number;
+}
+
+const applySeriesData = (
   series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">,
   type: 'candlestick' | 'line',
-  chartData: ChartData[]
+  chartData: ChartData[],
+  dataStateRef: React.MutableRefObject<SeriesDataState | null>
 ) => {
-  if (type === 'candlestick') {
-    (series as ISeriesApi<"Candlestick">).setData(toCandlestickData(chartData));
-  } else {
-    (series as ISeriesApi<"Line">).setData(toLineData(chartData));
+  if (chartData.length === 0) {
+    if (type === 'candlestick') {
+      (series as ISeriesApi<"Candlestick">).setData([]);
+    } else {
+      (series as ISeriesApi<"Line">).setData([]);
+    }
+    dataStateRef.current = null;
+    return;
   }
+
+  const first = chartData[0];
+  const last = chartData[chartData.length - 1];
+  const previous = dataStateRef.current;
+  const canPatchLastBar = previous &&
+    previous.type === type &&
+    previous.length === chartData.length &&
+    previous.firstTime === first.time &&
+    previous.lastTime === last.time;
+
+  if (type === 'candlestick') {
+    if (canPatchLastBar) {
+      (series as ISeriesApi<"Candlestick">).update(toCandlestickPoint(last));
+    } else {
+      (series as ISeriesApi<"Candlestick">).setData(toCandlestickData(chartData));
+    }
+  } else {
+    if (canPatchLastBar) {
+      (series as ISeriesApi<"Line">).update(toLinePoint(last));
+    } else {
+      (series as ISeriesApi<"Line">).setData(toLineData(chartData));
+    }
+  }
+
+  dataStateRef.current = {
+    type,
+    length: chartData.length,
+    firstTime: first.time,
+    lastTime: last.time,
+  };
 };
 
 const formatCompactPremium = (premium: number): string => {
@@ -166,6 +235,7 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const lastPriceLineRef = useRef<any>(null);
+  const seriesDataStateRef = useRef<SeriesDataState | null>(null);
   const [currentType, setCurrentType] = useState(chartType);
   const [isMaximized, setIsMaximized] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
@@ -186,6 +256,8 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
       seriesRef.current = null;
       const series = createChartSeries(chartRef.current, newType);
       seriesRef.current = series;
+      seriesDataStateRef.current = null;
+      applySeriesData(series, newType, data, seriesDataStateRef);
     }
   };
 
@@ -218,7 +290,6 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
           minMove: 0.01,
         },
       });
-      series.setData(toCandlestickData(data));
       return series;
     }
 
@@ -234,7 +305,6 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
       crosshairMarkerRadius: 4,
       lineType: 2,
     });
-    series.setData(toLineData(data));
     return series;
   };
 
@@ -254,21 +324,7 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
       },
     });
 
-    // Generate synthetic volume data based on price movement
-    const volumeData: HistogramData[] = data.map((d, i) => {
-      const prevClose = i > 0 ? data[i - 1].close : d.open;
-      const volatility = Math.abs(d.high - d.low);
-      const volume = Math.random() * 100000 + volatility * 10000;
-      const color = d.close >= prevClose ? '#26a69a80' : '#ef535080';
-      
-      return {
-        time: toChartTime(d.time),
-        value: volume,
-        color: color,
-      };
-    });
-
-    volumeSeries.setData(volumeData);
+    volumeSeries.setData(toVolumeData(data));
     return volumeSeries;
   };
 
@@ -371,7 +427,7 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
   const updateBreakevenLines = (chart: any) => {
     clearBreakevenLines(chart);
 
-    if ((overlayMode !== 'levels' && overlayMode !== 'both') || !trades || trades.length === 0) return;
+    if ((overlayMode !== 'levels' && overlayMode !== 'both') || !trades || trades.length === 0 || data.length === 0) return;
 
     const highDeltaTrades = trades.filter(t => Math.abs(parseFloat(t.delta)) > DELTA_THRESHOLD);
     const breakevenGroups = new Map<number, { 
@@ -484,10 +540,10 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
         title: lineTitle || compactLineTitle,
       });
 
-      line.setData(data.map(d => ({
-        time: toChartTime(d.time),
-        value: level
-      })));
+      line.setData([
+        { time: toChartTime(data[0].time), value: level },
+        { time: toChartTime(data[data.length - 1].time), value: level },
+      ]);
 
       breakevenLinesRef.current.push(line);
     });
@@ -566,13 +622,7 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
     chartRef.current = chart;
     const series = createChartSeries(chart, currentType);
     seriesRef.current = series;
-    
-    if (showVolume) {
-      volumeSeriesRef.current = createVolumeSeries(chart);
-    }
-    
-    updateBreakevenLines(chart);
-    updateTradeMarkers(series);
+    applySeriesData(series, currentType, data, seriesDataStateRef);
 
     const handleResize = () => {
       if (chartContainerRef.current && chart) {
@@ -589,64 +639,70 @@ export const StockChart: React.FC<ExtendedStockChartProps> = ({
       breakevenLinesRef.current = [];
       volumeSeriesRef.current = null;
       seriesRef.current = null;
+      seriesDataStateRef.current = null;
       chart.remove();
     };
-  }, [showVolume]);
+  }, [symbol]);
 
   useEffect(() => {
     if (!chartRef.current || !seriesRef.current) return;
 
-    setSeriesData(seriesRef.current, currentType, data);
+    applySeriesData(seriesRef.current, currentType, data, seriesDataStateRef);
 
-    // Update volume series
     if (volumeSeriesRef.current && showVolume && data.length > 0) {
-      const volumeData: HistogramData[] = data.map((d, i) => {
-        const prevClose = i > 0 ? data[i - 1].close : d.open;
-        const volatility = Math.abs(d.high - d.low);
-        const volume = Math.random() * 100000 + volatility * 10000;
-        const color = d.close >= prevClose ? '#26a69a80' : '#ef535080';
-        
-        return {
-          time: toChartTime(d.time),
-          value: volume,
-          color: color,
-        };
-      });
-      volumeSeriesRef.current.setData(volumeData);
+      volumeSeriesRef.current.setData(toVolumeData(data));
     }
 
-    // Update price line - remove old one first
     if (data.length > 0 && seriesRef.current) {
-      // Remove previous price line if it exists
-      if (lastPriceLineRef.current) {
-        try {
-          seriesRef.current.removePriceLine(lastPriceLineRef.current);
-        } catch (e) {
-          // Price line might not exist
-        }
-      }
-      
-      // Create new price line
       try {
-        lastPriceLineRef.current = seriesRef.current.createPriceLine({
-          price: data[data.length - 1].close,
-          color: '#2962FF',
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: 'Last',
-        });
+        if (lastPriceLineRef.current) {
+          lastPriceLineRef.current.applyOptions({ price: data[data.length - 1].close });
+        } else {
+          lastPriceLineRef.current = seriesRef.current.createPriceLine({
+            price: data[data.length - 1].close,
+            color: '#2962FF',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: 'Last',
+          });
+        }
       } catch (e) {
         console.error('Failed to create price line:', e);
       }
     }
-
-    updateBreakevenLines(chartRef.current);
-    updateTradeMarkers(seriesRef.current);
     
     // Don't auto-scroll - let user control the view
     // chartRef.current.timeScale().fitContent();
-  }, [data, trades, currentType, showVolume, futuresSpread, roundFigures, showLabels, showEsLabels, overlayMode]);
+  }, [data, currentType, showVolume]);
+
+  useEffect(() => {
+    if (!chartRef.current) return;
+
+    if (showVolume && !volumeSeriesRef.current) {
+      volumeSeriesRef.current = createVolumeSeries(chartRef.current);
+      return;
+    }
+
+    if (!showVolume && volumeSeriesRef.current) {
+      try {
+        chartRef.current.removeSeries(volumeSeriesRef.current);
+      } catch {
+        // Ignore stale series handles after chart teardown.
+      }
+      volumeSeriesRef.current = null;
+    }
+  }, [showVolume]);
+
+  const firstDataTime = data[0]?.time ?? 0;
+  const lastDataTime = data[data.length - 1]?.time ?? 0;
+
+  useEffect(() => {
+    if (!chartRef.current || !seriesRef.current) return;
+
+    updateBreakevenLines(chartRef.current);
+    updateTradeMarkers(seriesRef.current);
+  }, [trades, currentType, futuresSpread, roundFigures, showLabels, showEsLabels, overlayMode, firstDataTime, lastDataTime]);
 
   // Don't auto-scroll when new data arrives - keep the current view stable
   // useEffect(() => {

@@ -15,6 +15,7 @@ interface AggregatedFlow {
   netFlow: number;
   intentPremium: number;
   cumulativeIntentPremium: number;
+  tradeCount: number;
 }
 
 type DeltaIntent = 'sold' | 'mixed' | 'bought';
@@ -160,7 +161,7 @@ export const FlowChart: React.FC<FlowChartProps> = ({ trades }) => {
     });
 
     // Group by time intervals (1 minute)
-    const flowMap = new Map<number, { calls: number; puts: number; intentPremium: number }>();
+    const flowMap = new Map<number, { calls: number; puts: number; intentPremium: number; tradeCount: number }>();
 
     filteredTrades.forEach(trade => {
       // Parse timestamp to get time in seconds
@@ -168,7 +169,7 @@ export const FlowChart: React.FC<FlowChartProps> = ({ trades }) => {
       const timeKey = Math.floor(tradeDate.getTime() / 1000 / 60) * 60; // Round to minute
 
       if (!flowMap.has(timeKey)) {
-        flowMap.set(timeKey, { calls: 0, puts: 0, intentPremium: 0 });
+        flowMap.set(timeKey, { calls: 0, puts: 0, intentPremium: 0, tradeCount: 0 });
       }
 
       const flow = flowMap.get(timeKey)!;
@@ -178,18 +179,20 @@ export const FlowChart: React.FC<FlowChartProps> = ({ trades }) => {
         flow.puts += trade.quantity;
       }
       flow.intentPremium += getIntentSignedPremium(trade);
+      flow.tradeCount += 1;
     });
 
     // Convert to array and sort by time
     let cumulativeIntentPremium = 0;
     const flowData: AggregatedFlow[] = Array.from(flowMap.entries())
-      .map(([time, { calls, puts, intentPremium }]) => ({
+      .map(([time, { calls, puts, intentPremium, tradeCount }]) => ({
         time,
         calls,
         puts,
         netFlow: calls - puts,
         intentPremium,
         cumulativeIntentPremium: 0,
+        tradeCount,
       }))
       .sort((a, b) => a.time - b.time)
       .map(flow => {
@@ -203,24 +206,25 @@ export const FlowChart: React.FC<FlowChartProps> = ({ trades }) => {
     return flowData;
   };
 
+  const flowData = useMemo(
+    () => aggregateFlowData(trades, minDelta, maxDelta),
+    [trades, minDelta, maxDelta]
+  );
+
   const selectedFlowSummary = useMemo(() => {
-    const filteredTrades = trades.filter(trade => trade.absDelta >= minDelta && trade.absDelta <= maxDelta);
-    const calls = filteredTrades
-      .filter(trade => trade.type === 'C')
-      .reduce((sum, trade) => sum + trade.quantity, 0);
-    const puts = filteredTrades
-      .filter(trade => trade.type === 'P')
-      .reduce((sum, trade) => sum + trade.quantity, 0);
-    const premiumCvd = filteredTrades.reduce((sum, trade) => sum + getIntentSignedPremium(trade), 0);
+    const calls = flowData.reduce((sum, flow) => sum + flow.calls, 0);
+    const puts = flowData.reduce((sum, flow) => sum + flow.puts, 0);
+    const premiumCvd = flowData.reduce((sum, flow) => sum + flow.intentPremium, 0);
+    const tradeCount = flowData.reduce((sum, flow) => sum + flow.tradeCount, 0);
 
     return {
       calls,
       puts,
       netFlow: calls - puts,
       premiumCvd,
-      tradeCount: filteredTrades.length,
+      tradeCount,
     };
-  }, [trades, minDelta, maxDelta]);
+  }, [flowData]);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -350,8 +354,6 @@ export const FlowChart: React.FC<FlowChartProps> = ({ trades }) => {
       !cvdSeriesRef.current
     ) return;
 
-    const flowData = aggregateFlowData(trades, minDelta, maxDelta);
-
     if (flowData.length === 0) {
       callSeriesRef.current.setData([]);
       putSeriesRef.current.setData([]);
@@ -393,9 +395,12 @@ export const FlowChart: React.FC<FlowChartProps> = ({ trades }) => {
       color: latestCvd >= 0 ? '#22C55E' : '#EF4444',
     });
     cvdSeriesRef.current.setData(cvdData);
+  }, [flowData, showCalls, showPuts, showNet, showCvd]);
 
+  useEffect(() => {
+    if (flowData.length === 0) return;
     chartRef.current?.timeScale().fitContent();
-  }, [trades, minDelta, maxDelta, showCalls, showPuts, showNet, showCvd]);
+  }, [flowData]);
 
   const deltaPresets = [
     { label: 'All', min: 0, max: 1 },

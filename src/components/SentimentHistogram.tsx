@@ -92,15 +92,44 @@ const SentimentHistogram: React.FC<SentimentHistogramProps> = ({ trades, current
       .sort((a, b) => b.totalPremium - a.totalPremium);
   }, [trades, intervalSize, roundFigures]);
 
-  const maxPremium = Math.max(1, ...sentimentData.map(d => Math.max(d.bullishPremium, d.bearishPremium)));
-  const totalBullish = sentimentData.reduce((sum, item) => sum + item.bullishPremium, 0);
-  const totalBearish = sentimentData.reduce((sum, item) => sum + item.bearishPremium, 0);
-  const totalPremium = totalBullish + totalBearish;
-  const netBullishPercent = totalPremium > 0 ? (totalBullish / totalPremium) * 100 : 0;
-  const closestLevel = sentimentData.reduce<IntervalSentiment | null>((closest, item) => {
-    if (!closest) return item;
-    return Math.abs(item.startPrice - currentPrice) < Math.abs(closest.startPrice - currentPrice) ? item : closest;
-  }, null);
+  const {
+    maxPremium,
+    totalBullish,
+    totalBearish,
+    netBullishPercent,
+    closestLevel,
+  } = useMemo<{
+    maxPremium: number;
+    totalBullish: number;
+    totalBearish: number;
+    netBullishPercent: number;
+    closestLevel: IntervalSentiment | null;
+  }>(() => {
+    let maxPremium = 1;
+    let totalBullish = 0;
+    let totalBearish = 0;
+    let closestLevel: IntervalSentiment | null = null;
+
+    sentimentData.forEach(item => {
+      maxPremium = Math.max(maxPremium, item.bullishPremium, item.bearishPremium);
+      totalBullish += item.bullishPremium;
+      totalBearish += item.bearishPremium;
+
+      if (!closestLevel || Math.abs(item.startPrice - currentPrice) < Math.abs(closestLevel.startPrice - currentPrice)) {
+        closestLevel = item;
+      }
+    });
+
+    const totalPremium = totalBullish + totalBearish;
+
+    return {
+      maxPremium,
+      totalBullish,
+      totalBearish,
+      netBullishPercent: totalPremium > 0 ? (totalBullish / totalPremium) * 100 : 0,
+      closestLevel,
+    };
+  }, [sentimentData, currentPrice]);
 
   return (
     <div className="mt-4 overflow-hidden rounded-lg border border-slate-700/70 bg-slate-900">

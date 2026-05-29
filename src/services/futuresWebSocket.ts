@@ -2,6 +2,8 @@ import { getAuthService, SessionTokens } from './capitalAuth';
 import { DEFAULT_SPOT_EPIC, getDefaultFuturesEpic } from '../utils/marketDefaults';
 
 const WS_URL = "wss://api-streaming-capital.backend-capital.com/connect";
+const SPREAD_EMIT_THROTTLE_MS = 1000;
+const DEBUG_WS = import.meta.env.DEV && import.meta.env.VITE_DEBUG_MARKET_DATA === 'true';
 
 export interface FuturesRealtimeData {
   spotPrice: number;
@@ -37,6 +39,9 @@ class FuturesWebSocketService {
   private reconnectTimeout: any = null;
   private pingInterval: any = null;
   private shouldReconnect = false;
+  private emitTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingData: FuturesRealtimeData | null = null;
+  private lastEmitAt = 0;
   
   private spotEpic = DEFAULT_SPOT_EPIC;
   private futuresEpic = getDefaultFuturesEpic();
@@ -62,11 +67,11 @@ class FuturesWebSocketService {
       const authService = getAuthService();
       this.tokens = await authService.getValidTokens();
 
-      console.log('[Futures WS] Connecting to', WS_URL);
+      if (DEBUG_WS) console.log('[Futures WS] Connecting to', WS_URL);
       this.ws = new WebSocket(WS_URL);
 
       this.ws.onopen = () => {
-        console.log('[Futures WS] Connected successfully');
+        if (DEBUG_WS) console.log('[Futures WS] Connected successfully');
         this.reconnectAttempts = 0;
         this.statusCallback?.(true);
         this.subscribeToMarkets();
@@ -82,7 +87,7 @@ class FuturesWebSocketService {
       };
 
       this.ws.onclose = () => {
-        console.log('[Futures WS] Disconnected');
+        if (DEBUG_WS) console.log('[Futures WS] Disconnected');
         this.statusCallback?.(false);
         this.stopPingInterval();
         if (this.shouldReconnect) {
@@ -98,7 +103,7 @@ class FuturesWebSocketService {
   private subscribeToMarkets() {
     if (!this.ws || !this.tokens) return;
 
-    console.log(`[Futures WS] Subscribing to ${this.spotEpic} and ${this.futuresEpic}`);
+    if (DEBUG_WS) console.log(`[Futures WS] Subscribing to ${this.spotEpic} and ${this.futuresEpic}`);
 
     // Subscribe to spot market
     const spotSubscription = JSON.stringify({
@@ -125,7 +130,7 @@ class FuturesWebSocketService {
     this.ws.send(spotSubscription);
     this.ws.send(futuresSubscription);
     
-    console.log('[Futures WS] Subscription messages sent');
+    if (DEBUG_WS) console.log('[Futures WS] Subscription messages sent');
   }
 
   private handleMessage(data: string) {
@@ -133,7 +138,7 @@ class FuturesWebSocketService {
       const message: WebSocketMessage = JSON.parse(data);
       
       // Log all messages for debugging
-      if (message.destination?.includes('market')) {
+      if (DEBUG_WS && message.destination?.includes('market')) {
         console.log('[Futures WS] Market message:', message);
       }
       
@@ -158,10 +163,10 @@ class FuturesWebSocketService {
           
           if (isSpot) {
             this.latestSpotPrice = midPrice;
-            console.log(`[Futures WS] ✓ Spot ${this.spotEpic}: $${midPrice.toFixed(2)}`);
+            if (DEBUG_WS) console.log(`[Futures WS] Spot ${this.spotEpic}: $${midPrice.toFixed(2)}`);
           } else if (isFutures) {
             this.latestFuturesPrice = midPrice;
-            console.log(`[Futures WS] ✓ Futures ${this.futuresEpic}: $${midPrice.toFixed(2)}`);
+            if (DEBUG_WS) console.log(`[Futures WS] Futures ${this.futuresEpic}: $${midPrice.toFixed(2)}`);
           }
 
           // If we have both prices, emit the spread data
@@ -189,8 +194,38 @@ class FuturesWebSocketService {
       lastUpdate: new Date(),
     };
 
-    console.log(`[Futures WS] 📊 Spread Update: ${spread.toFixed(2)} pts (${spreadPercent.toFixed(2)}%)`);
-    this.dataCallback?.(data);
+    if (DEBUG_WS) console.log(`[Futures WS] Spread Update: ${spread.toFixed(2)} pts (${spreadPercent.toFixed(2)}%)`);
+    this.scheduleDataEmit(data);
+  }
+
+  private scheduleDataEmit(data: FuturesRealtimeData) {
+    this.pendingData = data;
+    if (!this.dataCallback) return;
+
+    const emit = () => {
+      this.emitTimer = null;
+      this.lastEmitAt = Date.now();
+      const nextData = this.pendingData;
+      this.pendingData = null;
+
+      if (nextData) {
+        this.dataCallback?.(nextData);
+      }
+    };
+    const waitMs = SPREAD_EMIT_THROTTLE_MS - (Date.now() - this.lastEmitAt);
+
+    if (waitMs <= 0) {
+      if (this.emitTimer) {
+        clearTimeout(this.emitTimer);
+        this.emitTimer = null;
+      }
+      emit();
+      return;
+    }
+
+    if (!this.emitTimer) {
+      this.emitTimer = setTimeout(emit, waitMs);
+    }
   }
 
   private startPingInterval() {
@@ -202,7 +237,7 @@ class FuturesWebSocketService {
           cst: this.tokens.cst,
           securityToken: this.tokens.securityToken,
         }));
-        console.log('[Futures WS] Ping sent');
+        if (DEBUG_WS) console.log('[Futures WS] Ping sent');
       }
     }, 30000); // Ping every 30 seconds
   }
@@ -216,14 +251,14 @@ class FuturesWebSocketService {
 
   private attemptReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log('[Futures WS] Max reconnect attempts reached');
+      if (DEBUG_WS) console.log('[Futures WS] Max reconnect attempts reached');
       return;
     }
 
     this.reconnectAttempts++;
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
     
-    console.log(`[Futures WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    if (DEBUG_WS) console.log(`[Futures WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
     
     this.reconnectTimeout = setTimeout(() => {
       if (this.dataCallback && this.statusCallback) {
@@ -239,6 +274,11 @@ class FuturesWebSocketService {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
+    if (this.emitTimer) {
+      clearTimeout(this.emitTimer);
+      this.emitTimer = null;
+    }
+    this.pendingData = null;
     
     this.stopPingInterval();
     

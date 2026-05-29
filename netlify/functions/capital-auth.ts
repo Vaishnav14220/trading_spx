@@ -1,4 +1,4 @@
-import { Handler } from '@netlify/functions';
+import type { Handler } from '@netlify/functions';
 
 const BASE_URL = "https://api-capital.backend-capital.com";
 

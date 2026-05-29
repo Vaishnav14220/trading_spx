@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ClipboardPaste, Trash2 } from 'lucide-react';
 
 interface OptionsInputProps {
-  onSubmit: (data: string) => void;
+  onSubmit: (data: string) => void | Promise<void>;
 }
 
 const OptionsInput: React.FC<OptionsInputProps> = ({ onSubmit }) => {
@@ -10,14 +10,14 @@ const OptionsInput: React.FC<OptionsInputProps> = ({ onSubmit }) => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(optionsData);
+    void onSubmit(optionsData);
   };
 
   const handlePaste = async () => {
     try {
       const text = await navigator.clipboard.readText();
       setOptionsData(text);
-      onSubmit(text);
+      void onSubmit(text);
     } catch (err) {
       console.error('Failed to paste:', err);
     }
@@ -25,7 +25,7 @@ const OptionsInput: React.FC<OptionsInputProps> = ({ onSubmit }) => {
 
   const handleClear = () => {
     setOptionsData('');
-    onSubmit('');
+    void onSubmit('');
   };
 
   const placeholder = `22:51:26\t24 OCT 24 5895 C\t149\t.10\tCBOE\t.05x.10\t.01\t13.23%\t5797.42

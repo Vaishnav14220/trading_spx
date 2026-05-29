@@ -3,6 +3,8 @@ import { getAuthService, SessionTokens } from './capitalAuth';
 
 const WS_URL = "wss://api-streaming-capital.backend-capital.com/connect";
 const EPIC = "US500";
+const UI_EMIT_THROTTLE_MS = 1000;
+const DEBUG_WS = import.meta.env.DEV && import.meta.env.VITE_DEBUG_MARKET_DATA === 'true';
 
 interface WebSocketMessage {
   destination?: string;
@@ -24,6 +26,9 @@ export class SPXWebSocketService {
   private onError: ((error: string) => void) | null = null;
   private isConnected: boolean = false;
   private tokens: SessionTokens | null = null;
+  private shouldReconnect = false;
+  private emitTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastEmitAt = 0;
 
   constructor() {
     this.initializeHistory();
@@ -46,6 +51,7 @@ export class SPXWebSocketService {
   ) {
     this.onPriceUpdate = onPriceUpdate;
     this.onError = onError;
+    this.shouldReconnect = true;
 
     // Set initial historical data if provided
     if (initialHistoricalData && initialHistoricalData.length > 0) {
@@ -53,8 +59,10 @@ export class SPXWebSocketService {
       // Set lastCandleTime to the last historical candle time
       const lastCandle = initialHistoricalData[initialHistoricalData.length - 1];
       this.lastCandleTime = this.getCandleTime(lastCandle.time);
-      console.log(`[WebSocket] Initialized with ${initialHistoricalData.length} historical candles`);
-      console.log(`[WebSocket] Last candle time: ${new Date(lastCandle.time * 1000).toLocaleString()}`);
+      if (DEBUG_WS) {
+        console.log(`[WebSocket] Initialized with ${initialHistoricalData.length} historical candles`);
+        console.log(`[WebSocket] Last candle time: ${new Date(lastCandle.time * 1000).toLocaleString()}`);
+      }
       
       // Emit initial historical data immediately
       if (this.onPriceUpdate) {
@@ -80,7 +88,7 @@ export class SPXWebSocketService {
       this.ws = new WebSocket(WS_URL);
 
       this.ws.onopen = () => {
-        console.log('WebSocket connected');
+        if (DEBUG_WS) console.log('WebSocket connected');
         this.isConnected = true;
         this.subscribe();
         this.startPingInterval();
@@ -104,10 +112,12 @@ export class SPXWebSocketService {
       };
 
       this.ws.onclose = () => {
-        console.log('WebSocket closed');
+        if (DEBUG_WS) console.log('WebSocket closed');
         this.isConnected = false;
         this.stopPingInterval();
-        this.scheduleReconnect();
+        if (this.shouldReconnect) {
+          this.scheduleReconnect();
+        }
       };
     } catch (error) {
       console.error('Failed to create WebSocket connection:', error);
@@ -131,12 +141,12 @@ export class SPXWebSocketService {
     };
 
     this.ws.send(JSON.stringify(subscribeMsg));
-    console.log('Subscribed to real-time prices for', EPIC);
+    if (DEBUG_WS) console.log('Subscribed to real-time prices for', EPIC);
   }
 
   private handleMessage(data: WebSocketMessage) {
     // Log first few messages for debugging
-    if (this.priceHistory.length < 5) {
+    if (DEBUG_WS && this.priceHistory.length < 5) {
       console.log('[WebSocket] Received message:', data);
     }
     
@@ -161,7 +171,9 @@ export class SPXWebSocketService {
               close: this.currentCandle.close || this.currentCandle.open,
             };
             this.priceHistory.push(completedCandle);
-            console.log(`[WebSocket] ✅ Completed candle #${this.priceHistory.length} at ${new Date(this.currentCandle.time * 1000).toLocaleTimeString()}, price: $${completedCandle.close.toFixed(2)}`);
+            if (DEBUG_WS) {
+              console.log(`[WebSocket] Completed candle #${this.priceHistory.length} at ${new Date(this.currentCandle.time * 1000).toLocaleTimeString()}, price: $${completedCandle.close.toFixed(2)}`);
+            }
           }
 
           // Start new candle
@@ -190,22 +202,52 @@ export class SPXWebSocketService {
           }
         }
 
-        // Emit update with history + current candle
-        const currentData = [...this.priceHistory];
-        if (this.currentCandle.time && this.currentCandle.open) {
-          currentData.push({
-            time: this.currentCandle.time,
-            open: this.currentCandle.open,
-            high: this.currentCandle.high || this.currentCandle.open,
-            low: this.currentCandle.low || this.currentCandle.open,
-            close: this.currentCandle.close || this.currentCandle.open,
-          });
-        }
-
-        if (this.onPriceUpdate && currentData.length > 0) {
-          this.onPriceUpdate(currentData);
-        }
+        this.schedulePriceUpdate();
       }
+    }
+  }
+
+  private getCurrentData(): ChartData[] {
+    const currentData = [...this.priceHistory];
+
+    if (this.currentCandle.time && this.currentCandle.open !== undefined) {
+      currentData.push({
+        time: this.currentCandle.time,
+        open: this.currentCandle.open,
+        high: this.currentCandle.high ?? this.currentCandle.open,
+        low: this.currentCandle.low ?? this.currentCandle.open,
+        close: this.currentCandle.close ?? this.currentCandle.open,
+      });
+    }
+
+    return currentData;
+  }
+
+  private schedulePriceUpdate() {
+    if (!this.onPriceUpdate) return;
+
+    const emit = () => {
+      this.emitTimer = null;
+      this.lastEmitAt = Date.now();
+      const currentData = this.getCurrentData();
+
+      if (this.onPriceUpdate && currentData.length > 0) {
+        this.onPriceUpdate(currentData);
+      }
+    };
+    const waitMs = UI_EMIT_THROTTLE_MS - (Date.now() - this.lastEmitAt);
+
+    if (waitMs <= 0) {
+      if (this.emitTimer) {
+        clearTimeout(this.emitTimer);
+        this.emitTimer = null;
+      }
+      emit();
+      return;
+    }
+
+    if (!this.emitTimer) {
+      this.emitTimer = setTimeout(emit, waitMs);
     }
   }
 
@@ -219,7 +261,7 @@ export class SPXWebSocketService {
           securityToken: this.tokens.securityToken
         };
         this.ws.send(JSON.stringify(pingMsg));
-        console.log('Ping sent to keep connection alive');
+        if (DEBUG_WS) console.log('Ping sent to keep connection alive');
       }
     }, 300000); // 5 minutes
   }
@@ -235,22 +277,29 @@ export class SPXWebSocketService {
     if (this.reconnectTimer) return;
 
     this.reconnectTimer = setTimeout(() => {
-      console.log('Attempting to reconnect...');
+      if (DEBUG_WS) console.log('Attempting to reconnect...');
       this.reconnectTimer = null;
       this.createConnection();
     }, 5000); // Retry after 5 seconds
   }
 
   disconnect() {
+    this.shouldReconnect = false;
     this.stopPingInterval();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    if (this.emitTimer) {
+      clearTimeout(this.emitTimer);
+      this.emitTimer = null;
+    }
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
+    this.onPriceUpdate = null;
+    this.onError = null;
   }
 
   isConnectedToWebSocket(): boolean {

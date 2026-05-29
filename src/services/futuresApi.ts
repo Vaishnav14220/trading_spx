@@ -1,6 +1,8 @@
 import { getAuthService, BASE_URL } from './capitalAuth';
 import { DEFAULT_SPOT_EPIC, getStoredFuturesEpic } from '../utils/marketDefaults';
 
+const DEBUG_API = import.meta.env.DEV && import.meta.env.VITE_DEBUG_MARKET_DATA === 'true';
+
 // Get EPICs from localStorage or use defaults
 function getSpotEpic(): string {
   return localStorage.getItem('market_spot_epic') || DEFAULT_SPOT_EPIC;
@@ -30,7 +32,7 @@ export interface FuturesSpreadData {
 }
 
 async function fetchMarketData(epic: string, tokens: any): Promise<MarketDetails> {
-  console.log(`[Futures API] Fetching market data for: ${epic}`);
+  if (DEBUG_API) console.log(`[Futures API] Fetching market data for: ${epic}`);
   
   const response = await fetch(`${BASE_URL}/api/v1/markets/${epic}`, {
     method: 'GET',
@@ -47,7 +49,7 @@ async function fetchMarketData(epic: string, tokens: any): Promise<MarketDetails
   }
 
   const data = await response.json();
-  console.log(`[Futures API] Data for ${epic}:`, data);
+  if (DEBUG_API) console.log(`[Futures API] Data for ${epic}:`, data);
   
   return data.snapshot || data;
 }
@@ -60,15 +62,22 @@ export async function fetchFuturesSpread(): Promise<FuturesSpreadData> {
     const spotEpic = getSpotEpic();
     const futuresEpic = getFuturesEpic();
 
-    console.log(`[Futures API] Using Spot: ${spotEpic}, Futures: ${futuresEpic}`);
+    if (DEBUG_API) console.log(`[Futures API] Using Spot: ${spotEpic}, Futures: ${futuresEpic}`);
 
-    const spotData = await fetchMarketData(spotEpic, tokens);
-    let futuresData: MarketDetails | null = null;
+    const [spotResult, futuresResult] = await Promise.allSettled([
+      fetchMarketData(spotEpic, tokens),
+      fetchMarketData(futuresEpic, tokens),
+    ]);
 
-    try {
-      futuresData = await fetchMarketData(futuresEpic, tokens);
-    } catch (error) {
-      console.warn(`[Futures API] Futures epic ${futuresEpic} unavailable. Spread widget will use spot as fallback.`, error);
+    if (spotResult.status === 'rejected') {
+      throw spotResult.reason;
+    }
+
+    const spotData = spotResult.value;
+    const futuresData = futuresResult.status === 'fulfilled' ? futuresResult.value : null;
+
+    if (futuresResult.status === 'rejected') {
+      console.warn(`[Futures API] Futures epic ${futuresEpic} unavailable. Spread widget will use spot as fallback.`, futuresResult.reason);
     }
 
     // Use mid price (average of bid and offer)
@@ -77,7 +86,7 @@ export async function fetchFuturesSpread(): Promise<FuturesSpreadData> {
     const spread = futuresPrice - spotPrice;
     const spreadPercent = (spread / spotPrice) * 100;
 
-    console.log(`[Futures API] SUCCESS - Spot: ${spotPrice.toFixed(2)}, Futures: ${futuresPrice.toFixed(2)}, Spread: ${spread.toFixed(2)}`);
+    if (DEBUG_API) console.log(`[Futures API] SUCCESS - Spot: ${spotPrice.toFixed(2)}, Futures: ${futuresPrice.toFixed(2)}, Spread: ${spread.toFixed(2)}`);
 
     return {
       spotPrice,

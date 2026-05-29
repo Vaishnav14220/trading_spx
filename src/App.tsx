@@ -1,5 +1,4 @@
-import React, { useState, useEffect } from 'react';
-import { StockChart } from './components/StockChart';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { fetchSPXData } from './services/stockApi';
 import { getWebSocketService } from './services/websocketApi';
 import { getAuthService } from './services/capitalAuth';
@@ -7,7 +6,9 @@ import { fetchCapitalHistoricalData } from './services/capitalHistoricalApi';
 import { fetchFuturesSpread, FuturesSpreadData } from './services/futuresApi';
 import { getFuturesWebSocketService, FuturesRealtimeData } from './services/futuresWebSocket';
 import { parseOptionsData } from './services/optionsParser';
+import { appendStoredOptionsTrades, clearStoredOptionsTrades, loadStoredOptionsTrades } from './services/optionsStorage';
 import type { ChartData } from './types/chart';
+import type { ParsedOptionData } from './types/options';
 import { LineChart, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import OptionsTable from './components/OptionsTable';
 import OptionsSummary from './components/OptionsSummary';
@@ -16,12 +17,31 @@ import SentimentAnalysis from './components/SentimentAnalysis';
 import DateFilter from './components/DateFilter';
 import CapitalSettings from './components/CapitalSettings';
 import ProcessOptionsWidget from './components/ProcessOptionsWidget';
-import FlowChart from './components/FlowChart';
 import { extractDate } from './utils/dateUtils';
 import { DEFAULT_SPOT_EPIC, getStoredFuturesEpic } from './utils/marketDefaults';
 
 const HISTORICAL_DAYS = 5;
 const HISTORICAL_FETCH_TIMEOUT_MS = 60000;
+const DEBUG_APP = import.meta.env.DEV && import.meta.env.VITE_DEBUG_MARKET_DATA === 'true';
+const EMPTY_OPTIONS_DATA: ParsedOptionData = {
+  trades: [],
+  summary: {
+    totalCallVolume: 0,
+    totalPutVolume: 0,
+    averageCallPrice: 0,
+    averagePutPrice: 0,
+    averageCallBreakeven: 0,
+    averagePutBreakeven: 0,
+  },
+};
+const StockChart = React.lazy(() => import('./components/StockChart').then(module => ({ default: module.StockChart })));
+const FlowChart = React.lazy(() => import('./components/FlowChart'));
+
+const ChartFallback = () => (
+  <div className="flex h-96 items-center justify-center rounded-lg bg-slate-900 text-sm text-slate-400">
+    Loading chart...
+  </div>
+);
 
 const App: React.FC = () => {
   const [stockData, setStockData] = useState<ChartData[]>([]);
@@ -38,27 +58,9 @@ const App: React.FC = () => {
   const [futuresSpread, setFuturesSpread] = useState<FuturesSpreadData | FuturesRealtimeData | null>(null);
   const [futuresConnected, setFuturesConnected] = useState(false);
   const [futuresUpdateFlash, setFuturesUpdateFlash] = useState(false);
-  const [optionsData, setOptionsData] = useState<{
-    trades: any[];
-    summary: {
-      totalCallVolume: number;
-      totalPutVolume: number;
-      averageCallPrice: number;
-      averagePutPrice: number;
-      averageCallBreakeven: number;
-      averagePutBreakeven: number;
-    };
-  }>({
-    trades: [],
-    summary: {
-      totalCallVolume: 0,
-      totalPutVolume: 0,
-      averageCallPrice: 0,
-      averagePutPrice: 0,
-      averageCallBreakeven: 0,
-      averagePutBreakeven: 0,
-    },
-  });
+  const futuresFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [optionsData, setOptionsData] = useState<ParsedOptionData>(EMPTY_OPTIONS_DATA);
+  const [optionsStorageStatus, setOptionsStorageStatus] = useState('');
 
   // Extract unique dates from trades
   const tradeDates = React.useMemo(() => {
@@ -80,35 +82,65 @@ const App: React.FC = () => {
       return tradeDate === selectedDate;
     });
   }, [optionsData.trades, selectedDate, showTodayOnly]);
+  const deferredCurrentPrice = React.useDeferredValue(currentPrice);
 
-  const handleOptionsSubmit = (data: string) => {
+  const processAndStoreOptionsData = async (data: string) => {
     const parsed = parseOptionsData(data);
-    setOptionsData(parsed);
-    setSelectedDate('all');
-    setShowTodayOnly(false);
-  };
 
-  const handleClearTrades = () => {
-    setOptionsData({
-      trades: [],
-      summary: {
-        totalCallVolume: 0,
-        totalPutVolume: 0,
-        averageCallPrice: 0,
-        averagePutPrice: 0,
-        averageCallBreakeven: 0,
-        averagePutBreakeven: 0,
-      },
-    });
-    setSelectedDate('all');
-    setShowTodayOnly(false);
-  };
+    if (parsed.trades.length === 0) {
+      setError('No valid options trades found in the pasted data.');
+      return;
+    }
 
-  const handleProcessOptionsData = (data: string) => {
     try {
-      const parsedData = parseOptionsData(data);
-      setOptionsData(parsedData);
-      setError('✅ Options data processed successfully!');
+      setOptionsStorageStatus('Saving options trades...');
+      const saved = await appendStoredOptionsTrades(parsed.trades);
+      setOptionsData({ trades: saved.trades, summary: saved.summary });
+      setSelectedDate('all');
+      setShowTodayOnly(false);
+      setOptionsStorageStatus(`Saved ${saved.insertedCount} new trades, skipped ${saved.duplicateCount} duplicates. Total stored: ${saved.totalStored}.`);
+      setError('');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown database error';
+      setOptionsData(parsed);
+      setSelectedDate('all');
+      setShowTodayOnly(false);
+      setOptionsStorageStatus(`Processed locally. Database save failed: ${message}`);
+      setError('');
+    }
+  };
+
+  const handleOptionsSubmit = async (data: string) => {
+    if (!data.trim()) {
+      await handleClearTrades();
+      return;
+    }
+
+    await processAndStoreOptionsData(data);
+  };
+
+  const handleClearTrades = async () => {
+    if (!window.confirm('Clear all saved option trades from the app and Supabase?')) {
+      return;
+    }
+
+    try {
+      const cleared = await clearStoredOptionsTrades();
+      setOptionsData(cleared);
+      setOptionsStorageStatus('Cleared all saved option trades.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown database error';
+      setOptionsData(EMPTY_OPTIONS_DATA);
+      setOptionsStorageStatus(`Cleared local trades. Database clear failed: ${message}`);
+    }
+
+    setSelectedDate('all');
+    setShowTodayOnly(false);
+  };
+
+  const handleProcessOptionsData = async (data: string) => {
+    try {
+      await processAndStoreOptionsData(data);
     } catch (err) {
       setError('❌ Failed to process options data. Please check the format.');
     }
@@ -144,9 +176,9 @@ const App: React.FC = () => {
     if (!credentialsSet) return;
     
     try {
-      console.log('[App] Loading futures spread...');
+      if (DEBUG_APP) console.log('[App] Loading futures spread...');
       const spread = await fetchFuturesSpread();
-      console.log('[App] Futures spread loaded:', spread);
+      if (DEBUG_APP) console.log('[App] Futures spread loaded:', spread);
       setFuturesSpread(spread);
       // setFuturesError('');
     } catch (error) {
@@ -169,6 +201,28 @@ const App: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    let isCancelled = false;
+
+    loadStoredOptionsTrades()
+      .then(storedOptionsData => {
+        if (isCancelled) return;
+        setOptionsData(storedOptionsData);
+        if (storedOptionsData.trades.length > 0) {
+          setOptionsStorageStatus(`Loaded ${storedOptionsData.trades.length} saved option trades.`);
+        }
+      })
+      .catch(err => {
+        if (isCancelled) return;
+        const message = err instanceof Error ? err.message : 'Unknown database error';
+        setOptionsStorageStatus(`Options database unavailable. New pastes will still process locally. ${message}`);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
   // Connect to futures WebSocket when credentials are set
   useEffect(() => {
     if (credentialsSet && useRealtime) {
@@ -181,7 +235,7 @@ const App: React.FC = () => {
       const spotEpic = localStorage.getItem('market_spot_epic') || DEFAULT_SPOT_EPIC;
       const futuresEpic = getStoredFuturesEpic();
       
-      console.log('[App] Connecting to futures WebSocket...');
+      if (DEBUG_APP) console.log('[App] Connecting to futures WebSocket...');
       
       futuresWS.connect(
         (data) => {
@@ -189,7 +243,13 @@ const App: React.FC = () => {
           // setFuturesError('');
           // Flash animation on update
           setFuturesUpdateFlash(true);
-          setTimeout(() => setFuturesUpdateFlash(false), 300);
+          if (futuresFlashTimerRef.current) {
+            clearTimeout(futuresFlashTimerRef.current);
+          }
+          futuresFlashTimerRef.current = setTimeout(() => {
+            setFuturesUpdateFlash(false);
+            futuresFlashTimerRef.current = null;
+          }, 300);
         },
         (connected) => {
           setFuturesConnected(connected);
@@ -199,7 +259,11 @@ const App: React.FC = () => {
       );
 
       return () => {
-        console.log('[App] Disconnecting futures WebSocket');
+        if (DEBUG_APP) console.log('[App] Disconnecting futures WebSocket');
+        if (futuresFlashTimerRef.current) {
+          clearTimeout(futuresFlashTimerRef.current);
+          futuresFlashTimerRef.current = null;
+        }
         futuresWS.disconnect();
       };
     } else if (credentialsSet && !useRealtime) {
@@ -231,8 +295,10 @@ const App: React.FC = () => {
             
             historicalData = await Promise.race([fetchPromise, timeoutPromise]);
             
-            console.log(`✅ Historical data loaded: ${historicalData.length} candles`);
-            console.log(`Date range: ${new Date(historicalData[0].time * 1000).toLocaleString()} to ${new Date(historicalData[historicalData.length - 1].time * 1000).toLocaleString()}`);
+            if (DEBUG_APP) {
+              console.log(`Historical data loaded: ${historicalData.length} candles`);
+              console.log(`Date range: ${new Date(historicalData[0].time * 1000).toLocaleString()} to ${new Date(historicalData[historicalData.length - 1].time * 1000).toLocaleString()}`);
+            }
             
             // Display historical data immediately
             setStockData(historicalData);
@@ -452,9 +518,17 @@ const App: React.FC = () => {
           />
         </div>
 
+        {optionsStorageStatus && (
+          <div className="rounded-lg border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-300">
+            {optionsStorageStatus}
+          </div>
+        )}
+
         <div className="space-y-6">
           {filteredTrades.length > 0 && (
-            <FlowChart trades={filteredTrades} />
+            <Suspense fallback={<ChartFallback />}>
+              <FlowChart trades={filteredTrades} />
+            </Suspense>
           )}
 
           <div className="w-full">
@@ -468,15 +542,16 @@ const App: React.FC = () => {
               </div>
             ) : (
               stockData.length > 0 && (
-                <StockChart 
-                  key={`chart-${showTodayOnly}-${selectedDate}-${filteredTrades.length}`}
-                  data={stockData} 
-                  symbol="SPX" 
-                  trades={filteredTrades}
-                  futuresSpread={futuresSpread?.spread || 0}
-                  roundFigures={roundFigures}
-                  historyDays={HISTORICAL_DAYS}
-                />
+                <Suspense fallback={<ChartFallback />}>
+                  <StockChart
+                    data={stockData}
+                    symbol="SPX"
+                    trades={filteredTrades}
+                    futuresSpread={futuresSpread?.spread || 0}
+                    roundFigures={roundFigures}
+                    historyDays={HISTORICAL_DAYS}
+                  />
+                </Suspense>
               )
             )}
           </div>
@@ -484,7 +559,7 @@ const App: React.FC = () => {
           <div className="w-full">
             <SentimentAnalysis 
               trades={filteredTrades} 
-              currentPrice={currentPrice}
+              currentPrice={deferredCurrentPrice}
               futuresSpread={futuresSpread?.spread || 0}
               roundFigures={roundFigures}
             />

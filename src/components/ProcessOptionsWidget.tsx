@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { Clipboard, Trash2, FileText } from 'lucide-react';
 
 interface ProcessOptionsWidgetProps {
-  onProcessData: (data: string) => void;
-  onClearAll: () => void;
+  onProcessData: (data: string) => void | Promise<void>;
+  onClearAll: () => void | Promise<void>;
 }
 
 const ProcessOptionsWidget: React.FC<ProcessOptionsWidgetProps> = ({ 
@@ -19,7 +19,7 @@ const ProcessOptionsWidget: React.FC<ProcessOptionsWidgetProps> = ({
       setIsProcessing(true);
       const text = await navigator.clipboard.readText();
       if (text.trim()) {
-        onProcessData(text);
+        await onProcessData(text);
         setError('');
       } else {
         setError('Clipboard is empty');
@@ -33,7 +33,7 @@ const ProcessOptionsWidget: React.FC<ProcessOptionsWidgetProps> = ({
 
   const handleManualInput = () => {
     if (inputData.trim()) {
-      onProcessData(inputData);
+      void onProcessData(inputData);
       setInputData('');
       setShowInput(false);
       setError('');
@@ -42,8 +42,8 @@ const ProcessOptionsWidget: React.FC<ProcessOptionsWidgetProps> = ({
     }
   };
 
-  const handleClearAll = () => {
-    onClearAll();
+  const handleClearAll = async () => {
+    await onClearAll();
     setInputData('');
     setShowInput(false);
     setError('');

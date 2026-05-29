@@ -4,6 +4,7 @@ export const BASE_URL = "https://api-capital.backend-capital.com";
 // Check if we're running on Netlify
 const isNetlify = window.location.hostname.includes('netlify.app') || 
                   window.location.hostname.includes('netlify.live');
+const DEBUG_API = import.meta.env.DEV && import.meta.env.VITE_DEBUG_MARKET_DATA === 'true';
 
 export interface SessionTokens {
   cst: string;
@@ -38,8 +39,10 @@ export class CapitalAuthService {
     try {
       // Use Netlify Function if deployed, otherwise use direct API
       if (isNetlify) {
-        console.log('[Auth] Using Netlify Function for authentication');
-        console.log('[Auth] Fetching from:', '/.netlify/functions/capital-auth');
+        if (DEBUG_API) {
+          console.log('[Auth] Using Netlify Function for authentication');
+          console.log('[Auth] Fetching from:', '/.netlify/functions/capital-auth');
+        }
         
         const response = await fetch('/.netlify/functions/capital-auth', {
           method: 'POST',
@@ -48,7 +51,7 @@ export class CapitalAuthService {
           },
         });
 
-        console.log('[Auth] Response status:', response.status);
+        if (DEBUG_API) console.log('[Auth] Response status:', response.status);
 
         if (!response.ok) {
           const error = await response.json();
@@ -60,13 +63,15 @@ export class CapitalAuthService {
         }
 
         const tokens = await response.json() as SessionTokens;
-        console.log('[Auth] Tokens received:', {
-          hasCst: !!tokens.cst,
-          hasSecurityToken: !!tokens.securityToken,
-        });
+        if (DEBUG_API) {
+          console.log('[Auth] Tokens received:', {
+            hasCst: !!tokens.cst,
+            hasSecurityToken: !!tokens.securityToken,
+          });
+        }
         
         this.tokens = tokens;
-        console.log('[Auth] Session created successfully via Netlify Function');
+        if (DEBUG_API) console.log('[Auth] Session created successfully via Netlify Function');
         return tokens;
       } else {
         // Local development - use localStorage credentials
@@ -100,7 +105,7 @@ export class CapitalAuthService {
         }
 
         this.tokens = { cst, securityToken };
-        console.log('Session created successfully');
+        if (DEBUG_API) console.log('Session created successfully');
         return this.tokens;
       }
     } catch (error) {
@@ -129,7 +134,7 @@ export class CapitalAuthService {
             const age = Date.now() - (parsed.timestamp || 0);
             // Use cached tokens if less than 5 minutes old
             if (age < 5 * 60 * 1000) {
-              console.log('[Auth] Using cached tokens');
+              if (DEBUG_API) console.log('[Auth] Using cached tokens');
               const cachedTokens = { cst: parsed.cst, securityToken: parsed.securityToken };
               this.tokens = cachedTokens;
               return cachedTokens;

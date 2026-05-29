@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { OptionTrade } from '../types/options';
 import { ArrowUpCircle, ArrowDownCircle, ArrowUpDown, TrendingUp, TrendingDown, Target, Copy, CopyCheck } from 'lucide-react';
 import TradesModal from './TradesModal';
@@ -35,6 +35,20 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
   const [selectedBreakeven, setSelectedBreakeven] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [copySuccess, setCopySuccess] = useState({ high: false, mid: false });
+  const [isDesktopLayout, setIsDesktopLayout] = useState(() =>
+    typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mediaQuery = window.matchMedia('(min-width: 1024px)');
+    const handleChange = () => setIsDesktopLayout(mediaQuery.matches);
+    handleChange();
+    mediaQuery.addEventListener('change', handleChange);
+
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -356,7 +370,8 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
 
         <TradeContextTable trades={trades} roundFigures={roundFigures} />
 
-        <div className="mt-4 hidden overflow-hidden rounded-lg border border-slate-700 bg-slate-900 lg:block">
+        {isDesktopLayout && (
+        <div className="mt-4 overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
           <div
             className="grid items-center gap-3 border-b border-slate-700 bg-slate-950/40 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
             style={{ gridTemplateColumns: '56px minmax(150px, 1.1fr) minmax(145px, 0.9fr) minmax(120px, 0.8fr) minmax(180px, 1fr) 92px' }}
@@ -453,7 +468,9 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
             })}
           </div>
         </div>
-        <div className="mt-3 grid gap-3 lg:hidden">
+        )}
+        {!isDesktopLayout && (
+        <div className="mt-3 grid gap-3">
           {sentiments.map((sentiment, index) => (
             <div
               key={`mobile-${sentiment.level}-${index}`}
@@ -488,6 +505,7 @@ const SentimentAnalysis: React.FC<SentimentAnalysisProps> = ({ trades, currentPr
             </div>
           ))}
         </div>
+        )}
       </div>
 
       {selectedBreakeven !== null && (

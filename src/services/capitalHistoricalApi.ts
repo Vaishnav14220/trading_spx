@@ -8,6 +8,7 @@ const HISTORICAL_FETCH_CONCURRENCY = 3;
 const ONE_MINUTE_MS = 60 * 1000;
 const CACHE_KEY = 'capital_historical_us500_cache';
 const CACHE_TTL_MS = 2 * 60 * 1000;
+const DEBUG_API = import.meta.env.DEV && import.meta.env.VITE_DEBUG_MARKET_DATA === 'true';
 
 interface CapitalHistoricalPrice {
   snapshotTime: string;
@@ -95,7 +96,7 @@ function readHistoricalCache(days: number, allowStale = false): ChartData[] | nu
       return null;
     }
 
-    console.log(`[Capital API] Using ${isFresh ? 'fresh' : 'stale'} cached historical data (${cache.data.length} candles)`);
+    if (DEBUG_API) console.log(`[Capital API] Using ${isFresh ? 'fresh' : 'stale'} cached historical data (${cache.data.length} candles)`);
     return cache.data;
   } catch (error) {
     console.warn('[Capital API] Failed to read historical cache:', error);
@@ -189,7 +190,7 @@ async function fetchHistoricalChunk(url: string, tokens: SessionTokens): Promise
     },
   });
 
-  console.log(`[Capital API] Response status: ${response.status}`);
+  if (DEBUG_API) console.log(`[Capital API] Response status: ${response.status}`);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -197,7 +198,7 @@ async function fetchHistoricalChunk(url: string, tokens: SessionTokens): Promise
   }
 
   const data: CapitalHistoricalResponse = await response.json();
-  console.log('[Capital API] Response keys:', Object.keys(data));
+  if (DEBUG_API) console.log('[Capital API] Response keys:', Object.keys(data));
 
   if (!data.prices || !Array.isArray(data.prices)) {
     throw new Error('Invalid data format');
@@ -219,7 +220,7 @@ async function fetchRecentFallback(tokens: SessionTokens): Promise<ChartData[]> 
 
 export async function fetchCapitalHistoricalData(days: number = DEFAULT_HISTORICAL_DAYS): Promise<ChartData[]> {
   try {
-    console.log(`[Capital API] Starting fetch for ${days} days of historical data...`);
+    if (DEBUG_API) console.log(`[Capital API] Starting fetch for ${days} days of historical data...`);
     const startTime = Date.now();
     const cachedData = readHistoricalCache(days);
 
@@ -229,14 +230,14 @@ export async function fetchCapitalHistoricalData(days: number = DEFAULT_HISTORIC
 
     const authService = getAuthService();
     const tokens = await authService.getValidTokens();
-    console.log(`[Capital API] Got auth tokens in ${Date.now() - startTime}ms`);
+    if (DEBUG_API) console.log(`[Capital API] Got auth tokens in ${Date.now() - startTime}ms`);
 
     const chunks = buildHistoricalChunks(days).reverse();
     const allData = new Map<number, ChartData>();
     let lastError: unknown = null;
 
     await mapWithConcurrency(chunks, HISTORICAL_FETCH_CONCURRENCY, async ({ chunkNumber, from, to, url }) => {
-      console.log(`[Capital API] Fetching chunk ${chunkNumber}: ${from} -> ${to}`);
+      if (DEBUG_API) console.log(`[Capital API] Fetching chunk ${chunkNumber}: ${from} -> ${to}`);
 
       try {
         const chunkData = await fetchHistoricalChunk(url, tokens);
@@ -269,8 +270,10 @@ export async function fetchCapitalHistoricalData(days: number = DEFAULT_HISTORIC
     }
 
     const totalTime = Date.now() - startTime;
-    console.log(`[Capital API] Loaded ${chartData.length} candles in ${totalTime}ms`);
-    console.log(`[Capital API] Date range: ${new Date(chartData[0].time * 1000).toLocaleString()} to ${new Date(chartData[chartData.length - 1].time * 1000).toLocaleString()}`);
+    if (DEBUG_API) {
+      console.log(`[Capital API] Loaded ${chartData.length} candles in ${totalTime}ms`);
+      console.log(`[Capital API] Date range: ${new Date(chartData[0].time * 1000).toLocaleString()} to ${new Date(chartData[chartData.length - 1].time * 1000).toLocaleString()}`);
+    }
 
     writeHistoricalCache(days, chartData);
     return chartData;
