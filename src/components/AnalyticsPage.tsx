@@ -50,7 +50,7 @@ const BLUE = '#3b82f6';
 const CYAN = '#14b8a6';
 const HIGH_DELTA_LEVEL_THRESHOLD = 0.6;
 
-type LevelTestStatus = 'retested' | 'tested' | 'untested' | 'no-data';
+type LevelTestStatus = 'retested' | 'tested' | 'untested' | 'pending' | 'no-data';
 
 interface LevelTestRow {
   level: number;
@@ -74,6 +74,7 @@ interface LevelTestSummary {
   tested: number;
   retested: number;
   untested: number;
+  pending: number;
   noData: number;
   totalTests: number;
   testedRate: number;
@@ -426,6 +427,9 @@ function buildLevelTestRows(
     });
 
   const sortedCandles = stockData.slice().sort((a, b) => a.time - b.time);
+  const lastCandleMs = sortedCandles.length > 0
+    ? sortedCandles[sortedCandles.length - 1].time * 1000
+    : null;
 
   return Array.from(groups.values())
     .map(row => {
@@ -451,7 +455,11 @@ function buildLevelTestRows(
         }
       }
 
-      const status: LevelTestStatus = startIndex < 0
+      const status: LevelTestStatus = sortedCandles.length === 0
+        ? 'no-data'
+        : lastCandleMs !== null && row.firstTradeMs > lastCandleMs
+        ? 'pending'
+        : startIndex < 0
         ? 'no-data'
         : testCount === 0
         ? 'untested'
@@ -479,14 +487,16 @@ function summarizeLevelTests(rows: LevelTestRow[]): LevelTestSummary {
   const tested = rows.filter(row => row.status === 'tested').length;
   const retested = rows.filter(row => row.status === 'retested').length;
   const untested = rows.filter(row => row.status === 'untested').length;
+  const pending = rows.filter(row => row.status === 'pending').length;
   const noData = rows.filter(row => row.status === 'no-data').length;
-  const coveredLevels = Math.max(1, rows.length - noData);
+  const coveredLevels = Math.max(1, rows.length - noData - pending);
 
   return {
     levels: rows.length,
     tested,
     retested,
     untested,
+    pending,
     noData,
     totalTests: rows.reduce((sum, row) => sum + row.testCount, 0),
     testedRate: ((tested + retested) / coveredLevels) * 100,
@@ -497,6 +507,7 @@ function getLevelStatusLabel(status: LevelTestStatus): string {
   if (status === 'retested') return 'Retested';
   if (status === 'tested') return 'Tested';
   if (status === 'untested') return 'Untested';
+  if (status === 'pending') return 'Pending candles';
   return 'No price data';
 }
 
@@ -504,6 +515,7 @@ function getLevelStatusClasses(status: LevelTestStatus): string {
   if (status === 'retested') return 'bg-blue-500/15 text-blue-300';
   if (status === 'tested') return 'bg-green-500/15 text-green-300';
   if (status === 'untested') return 'bg-amber-500/15 text-amber-300';
+  if (status === 'pending') return 'bg-cyan-500/15 text-cyan-300';
   return 'bg-slate-700 text-slate-300';
 }
 
@@ -511,6 +523,7 @@ function getLevelStatusColor(status: LevelTestStatus): string {
   if (status === 'retested') return BLUE;
   if (status === 'tested') return GREEN;
   if (status === 'untested') return '#f59e0b';
+  if (status === 'pending') return CYAN;
   return '#64748b';
 }
 
@@ -1006,7 +1019,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
       </div>
 
       <Section title={`High-Delta Level Tests (abs delta > ${HIGH_DELTA_LEVEL_THRESHOLD.toFixed(2)})`} icon={<Target className="h-5 w-5" />}>
-        <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
             <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
               <Target className="h-4 w-4 text-slate-400" />
@@ -1040,9 +1053,14 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
             <div className="mt-1 text-xs text-slate-500">not touched after first trade</div>
           </div>
           <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Pending</div>
+            <div className="mt-2 font-mono text-2xl font-bold text-cyan-300">{levelTestSummary.pending.toLocaleString()}</div>
+            <div className="mt-1 text-xs text-slate-500">trade time is after latest candle</div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
             <div className="text-xs uppercase tracking-wide text-slate-500">No Data</div>
             <div className="mt-2 font-mono text-2xl font-bold text-slate-300">{levelTestSummary.noData.toLocaleString()}</div>
-            <div className="mt-1 text-xs text-slate-500">outside loaded price history</div>
+            <div className="mt-1 text-xs text-slate-500">no SPX candles loaded</div>
           </div>
         </div>
 
@@ -1062,6 +1080,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
                     <th className="border-b border-slate-800 px-3 py-2 text-right">Tests</th>
                     <th className="border-b border-slate-800 px-3 py-2 text-right">Premium</th>
                     <th className="border-b border-slate-800 px-3 py-2 text-right">Net Intent</th>
+                    <th className="border-b border-slate-800 px-3 py-2 text-right">First Trade</th>
                     <th className="border-b border-slate-800 px-3 py-2 text-right">First Test</th>
                     <th className="border-b border-slate-800 px-3 py-2 text-right">Last Test</th>
                     <th className="border-b border-slate-800 px-3 py-2 text-right">Now Gap</th>
@@ -1088,6 +1107,9 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
                       <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-slate-200">{formatMoney(row.totalPremium)}</td>
                       <td className={`border-b border-slate-800 px-3 py-2 text-right font-mono ${row.netPremium >= 0 ? 'text-green-300' : 'text-red-300'}`}>
                         {formatMoney(row.netPremium)}
+                      </td>
+                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
+                        {formatDateTime(row.firstTradeMs)}
                       </td>
                       <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
                         {formatDateTime(row.firstTestMs)}
