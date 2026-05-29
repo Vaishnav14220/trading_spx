@@ -17,7 +17,7 @@ import SentimentAnalysis from './components/SentimentAnalysis';
 import DateFilter from './components/DateFilter';
 import CapitalSettings from './components/CapitalSettings';
 import ProcessOptionsWidget from './components/ProcessOptionsWidget';
-import { extractDateKey } from './utils/dateUtils';
+import { extractDateKey, formatLocalDateKey } from './utils/dateUtils';
 import { DEFAULT_SPOT_EPIC, getStoredFuturesEpic } from './utils/marketDefaults';
 
 const HISTORICAL_DAYS = 5;
@@ -73,8 +73,8 @@ const App: React.FC = () => {
   // Filter trades based on selected date and today filter
   const filteredTrades = React.useMemo(() => {
     if (showTodayOnly) {
-      // Show only trades that had time-only timestamps (no date in original data)
-      return optionsData.trades.filter(trade => trade.isTimeOnly === true);
+      const todayKey = formatLocalDateKey(new Date());
+      return optionsData.trades.filter(trade => extractDateKey(trade.timestamp) === todayKey);
     }
 
     if (dateRangeStart || dateRangeEnd) {
