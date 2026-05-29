@@ -33,7 +33,24 @@ const withLocalTimestampFields = (trade: OptionTrade) => {
 
 const readJson = async <T>(response: Response): Promise<T> => {
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  const contentType = response.headers.get('content-type') ?? '';
+
+  if (!contentType.includes('application/json')) {
+    const looksLikeHtml = text.trimStart().startsWith('<');
+    throw new Error(
+      looksLikeHtml
+        ? 'Options storage endpoint returned the app page instead of the Netlify Function. Use the deployed Netlify site or run with netlify dev; plain Vite dev cannot save to Supabase.'
+        : `Options storage returned ${contentType || 'an unknown content type'} instead of JSON.`
+    );
+  }
+
+  let data: { error?: string } & Record<string, unknown> = {};
+
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error('Options storage returned invalid JSON.');
+  }
 
   if (!response.ok) {
     const message = typeof data?.error === 'string' ? data.error : `Options storage request failed (${response.status})`;
