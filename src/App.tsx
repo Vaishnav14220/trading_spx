@@ -37,6 +37,21 @@ const EMPTY_OPTIONS_DATA: ParsedOptionData = {
 const StockChart = React.lazy(() => import('./components/StockChart').then(module => ({ default: module.StockChart })));
 const FlowChart = React.lazy(() => import('./components/FlowChart'));
 const AnalyticsPage = React.lazy(() => import('./components/AnalyticsPage'));
+const PremiumLevelsPage = React.lazy(() => import('./components/PremiumLevelsPage'));
+
+type ActivePage = 'chart' | 'analytics' | 'premiums';
+
+const getPageFromHash = (): ActivePage => {
+  if (window.location.hash === '#analytics') return 'analytics';
+  if (window.location.hash === '#premiums') return 'premiums';
+  return 'chart';
+};
+
+const getPageTitle = (page: ActivePage): string => {
+  if (page === 'analytics') return 'SPX Flow Analytics';
+  if (page === 'premiums') return 'SPX Premium Levels';
+  return 'S&P 500 Live Chart';
+};
 
 const ChartFallback = () => (
   <div className="flex h-96 items-center justify-center rounded-lg bg-slate-900 text-sm text-slate-400">
@@ -64,9 +79,7 @@ const App: React.FC = () => {
   const futuresFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [optionsData, setOptionsData] = useState<ParsedOptionData>(EMPTY_OPTIONS_DATA);
   const [optionsStorageStatus, setOptionsStorageStatus] = useState('');
-  const [activePage, setActivePage] = useState<'chart' | 'analytics'>(() => (
-    window.location.hash === '#analytics' ? 'analytics' : 'chart'
-  ));
+  const [activePage, setActivePage] = useState<ActivePage>(() => getPageFromHash());
 
   // Extract unique dates from trades
   const tradeDates = React.useMemo(() => {
@@ -127,9 +140,9 @@ const App: React.FC = () => {
     }
   };
 
-  const handlePageChange = (page: 'chart' | 'analytics') => {
+  const handlePageChange = (page: ActivePage) => {
     setActivePage(page);
-    const nextHash = page === 'analytics' ? '#analytics' : '#chart';
+    const nextHash = page === 'analytics' ? '#analytics' : page === 'premiums' ? '#premiums' : '#chart';
     if (window.location.hash !== nextHash) {
       window.history.pushState(null, '', nextHash);
     }
@@ -260,7 +273,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const syncPageFromHash = () => {
-      setActivePage(window.location.hash === '#analytics' ? 'analytics' : 'chart');
+      setActivePage(getPageFromHash());
     };
 
     window.addEventListener('hashchange', syncPageFromHash);
@@ -504,7 +517,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-3">
             <LineChart className="h-8 w-8 text-blue-500" />
             <h1 className="text-3xl font-bold text-white">
-              {activePage === 'analytics' ? 'SPX Flow Analytics' : 'S&P 500 Live Chart'}
+              {getPageTitle(activePage)}
             </h1>
             {useRealtime && (
               <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${isConnected ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
@@ -547,6 +560,18 @@ const App: React.FC = () => {
               >
                 <BarChart3 className="h-4 w-4" />
                 Analytics
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePageChange('premiums')}
+                className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  activePage === 'premiums'
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                }`}
+              >
+                <BarChart3 className="h-4 w-4" />
+                Premiums
               </button>
             </div>
             <CapitalSettings onCredentialsSet={handleCredentialsSet} />
@@ -629,6 +654,15 @@ const App: React.FC = () => {
               stockData={stockData}
               currentPrice={deferredCurrentPrice}
               roundFigures={roundFigures}
+            />
+          </Suspense>
+        ) : activePage === 'premiums' ? (
+          <Suspense fallback={<ChartFallback />}>
+            <PremiumLevelsPage
+              trades={filteredTrades}
+              currentPrice={deferredCurrentPrice}
+              roundFigures={roundFigures}
+              futuresSpread={futuresSpread?.spread || 0}
             />
           </Suspense>
         ) : (
