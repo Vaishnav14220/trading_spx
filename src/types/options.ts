@@ -1,5 +1,7 @@
 export interface OptionTrade {
   timestamp: string;
+  timestampIso?: string | null;
+  tradeDate?: string | null;
   contract: string;
   quantity: number;
   price: number;

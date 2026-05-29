@@ -169,6 +169,8 @@ const toTradeRows = (trades: IncomingTrade[], importBatchId?: string): TradeRow[
 
 const toClientTrade = (row: Record<string, unknown>): IncomingTrade => ({
   timestamp: String(row.timestamp_text ?? ''),
+  timestampIso: typeof row.trade_ts === 'string' ? row.trade_ts : null,
+  tradeDate: typeof row.trade_date === 'string' ? row.trade_date : null,
   contract: String(row.contract ?? ''),
   quantity: Number(row.quantity ?? 0),
   price: Number(row.price ?? 0),
@@ -226,7 +228,7 @@ const fetchTrades = async () => {
 
   while (true) {
     const page = await request<Record<string, unknown>[]>(
-      `/option_trades?select=timestamp_text,contract,quantity,price,exchange,bid_ask,delta,iv,underlying_price,option_type,strike,breakeven,abs_delta,is_time_only&order=trade_ts.asc&order=id.asc&limit=${pageSize}&offset=${offset}`
+      `/option_trades?select=trade_ts,trade_date,timestamp_text,contract,quantity,price,exchange,bid_ask,delta,iv,underlying_price,option_type,strike,breakeven,abs_delta,is_time_only&order=trade_ts.asc&order=id.asc&limit=${pageSize}&offset=${offset}`
     );
 
     rows.push(...page);

@@ -7,7 +7,7 @@ import type { ECharts, EChartsOption } from 'echarts';
 import { Activity, BarChart3, CheckCircle2, Layers, Repeat2, Target, TrendingUp } from 'lucide-react';
 import type { ChartData } from '../types/chart';
 import type { OptionTrade } from '../types/options';
-import { extractDateKey, formatDateLabel } from '../utils/dateUtils';
+import { extractDateKey, formatDateLabel, formatLocalDateKey } from '../utils/dateUtils';
 
 type Bias = 'bullish' | 'bearish' | 'mixed';
 type IntentBucket = 'OTM Sold Flow' | 'ATM Mixed Flow' | 'ITM Bought Flow';
@@ -50,7 +50,8 @@ const BLUE = '#3b82f6';
 const CYAN = '#14b8a6';
 const HIGH_DELTA_LEVEL_THRESHOLD = 0.6;
 
-type LevelTestStatus = 'retested' | 'tested' | 'untested' | 'pending' | 'no-data';
+type LevelTestStatus = 'retested' | 'tested' | 'untested' | 'no-data';
+type LevelAnchorSource = 'time' | 'underlying' | 'none';
 
 interface LevelTestRow {
   level: number;
@@ -61,11 +62,14 @@ interface LevelTestRow {
   netPremium: number;
   firstTradeMs: number;
   lastTradeMs: number;
+  firstUnderlyingPrice: number | null;
   testCount: number;
   retestCount: number;
   firstTestMs: number | null;
   lastTestMs: number | null;
   status: LevelTestStatus;
+  anchorSource: LevelAnchorSource;
+  anchorTimeMs: number | null;
   distanceFromCurrent: number;
 }
 
@@ -74,7 +78,7 @@ interface LevelTestSummary {
   tested: number;
   retested: number;
   untested: number;
-  pending: number;
+  timeAdjusted: number;
   noData: number;
   totalTests: number;
   testedRate: number;
@@ -104,8 +108,8 @@ function formatPrice(value: number, roundFigures: boolean): string {
   return roundFigures ? value.toFixed(0) : value.toFixed(2);
 }
 
-function parseTradeTimeMs(timestamp: string): number | null {
-  const parsed = new Date(timestamp).getTime();
+function parseTradeTimeMs(trade: OptionTrade): number | null {
+  const parsed = new Date(trade.timestampIso || trade.timestamp).getTime();
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -152,7 +156,7 @@ function classifyIntent(trade: OptionTrade): Pick<IntentTrade, 'bucket' | 'bias'
 function toIntentTrades(trades: OptionTrade[]): IntentTrade[] {
   return trades
     .map(trade => {
-      const timeMs = parseTradeTimeMs(trade.timestamp);
+      const timeMs = parseTradeTimeMs(trade);
       if (timeMs === null) return null;
 
       const intent = classifyIntent(trade);
@@ -393,13 +397,47 @@ function findCandleIndexAtOrAfter(stockData: ChartData[], targetMs: number): num
   return matchIndex;
 }
 
+function priceDistanceFromCandle(candle: ChartData, price: number): number {
+  if (candle.high >= price && candle.low <= price) return 0;
+  return Math.min(
+    Math.abs(candle.open - price),
+    Math.abs(candle.high - price),
+    Math.abs(candle.low - price),
+    Math.abs(candle.close - price)
+  );
+}
+
+function findClosestCandleIndexByUnderlying(stockData: ChartData[], underlyingPrice: number | null, targetMs: number): number {
+  if (!Number.isFinite(underlyingPrice) || underlyingPrice === null || underlyingPrice <= 0 || stockData.length === 0) {
+    return -1;
+  }
+
+  const targetDate = formatLocalDateKey(new Date(targetMs));
+  const sameDateIndexes = stockData
+    .map((candle, index) => ({ candle, index }))
+    .filter(({ candle }) => formatLocalDateKey(new Date(candle.time * 1000)) === targetDate);
+  const candidates = sameDateIndexes.length > 0
+    ? sameDateIndexes
+    : stockData.map((candle, index) => ({ candle, index }));
+
+  return candidates.reduce((best, candidate) => {
+    const priceDistance = priceDistanceFromCandle(candidate.candle, underlyingPrice);
+    const timeDistance = Math.abs((candidate.candle.time * 1000) - targetMs);
+    const score = priceDistance * 1_000_000 + Math.min(timeDistance, 24 * 60 * 60 * 1000);
+
+    return score < best.score
+      ? { index: candidate.index, score }
+      : best;
+  }, { index: -1, score: Number.POSITIVE_INFINITY }).index;
+}
+
 function buildLevelTestRows(
   intentTrades: IntentTrade[],
   stockData: ChartData[],
   roundFigures: boolean,
   currentPrice: number
 ): LevelTestRow[] {
-  const groups = new Map<number, Omit<LevelTestRow, 'testCount' | 'retestCount' | 'firstTestMs' | 'lastTestMs' | 'status' | 'distanceFromCurrent'>>();
+  const groups = new Map<number, Omit<LevelTestRow, 'testCount' | 'retestCount' | 'firstTestMs' | 'lastTestMs' | 'status' | 'anchorSource' | 'anchorTimeMs' | 'distanceFromCurrent'>>();
 
   intentTrades
     .filter(intent => intent.absDelta > HIGH_DELTA_LEVEL_THRESHOLD)
@@ -414,6 +452,7 @@ function buildLevelTestRows(
         netPremium: 0,
         firstTradeMs: intent.timeMs,
         lastTradeMs: intent.timeMs,
+        firstUnderlyingPrice: intent.spotAtTrade,
       };
 
       row.trades += 1;
@@ -421,19 +460,28 @@ function buildLevelTestRows(
       row.puts += intent.trade.type === 'P' ? 1 : 0;
       row.totalPremium += intent.premium;
       row.netPremium += intent.signedPremium;
-      row.firstTradeMs = Math.min(row.firstTradeMs, intent.timeMs);
+      if (intent.timeMs < row.firstTradeMs) {
+        row.firstTradeMs = intent.timeMs;
+        row.firstUnderlyingPrice = intent.spotAtTrade;
+      }
       row.lastTradeMs = Math.max(row.lastTradeMs, intent.timeMs);
       groups.set(level, row);
     });
 
   const sortedCandles = stockData.slice().sort((a, b) => a.time - b.time);
-  const lastCandleMs = sortedCandles.length > 0
-    ? sortedCandles[sortedCandles.length - 1].time * 1000
-    : null;
 
   return Array.from(groups.values())
     .map(row => {
-      const startIndex = findCandleIndexAtOrAfter(sortedCandles, row.firstTradeMs);
+      const timeStartIndex = findCandleIndexAtOrAfter(sortedCandles, row.firstTradeMs);
+      const underlyingStartIndex = timeStartIndex >= 0
+        ? -1
+        : findClosestCandleIndexByUnderlying(sortedCandles, row.firstUnderlyingPrice, row.firstTradeMs);
+      const startIndex = timeStartIndex >= 0 ? timeStartIndex : underlyingStartIndex;
+      const anchorSource: LevelAnchorSource = timeStartIndex >= 0
+        ? 'time'
+        : underlyingStartIndex >= 0
+        ? 'underlying'
+        : 'none';
       let testCount = 0;
       let firstTestMs: number | null = null;
       let lastTestMs: number | null = null;
@@ -457,8 +505,6 @@ function buildLevelTestRows(
 
       const status: LevelTestStatus = sortedCandles.length === 0
         ? 'no-data'
-        : lastCandleMs !== null && row.firstTradeMs > lastCandleMs
-        ? 'pending'
         : startIndex < 0
         ? 'no-data'
         : testCount === 0
@@ -474,6 +520,8 @@ function buildLevelTestRows(
         firstTestMs,
         lastTestMs,
         status,
+        anchorSource,
+        anchorTimeMs: startIndex >= 0 ? sortedCandles[startIndex].time * 1000 : null,
         distanceFromCurrent: row.level - currentPrice,
       };
     })
@@ -487,16 +535,16 @@ function summarizeLevelTests(rows: LevelTestRow[]): LevelTestSummary {
   const tested = rows.filter(row => row.status === 'tested').length;
   const retested = rows.filter(row => row.status === 'retested').length;
   const untested = rows.filter(row => row.status === 'untested').length;
-  const pending = rows.filter(row => row.status === 'pending').length;
+  const timeAdjusted = rows.filter(row => row.anchorSource === 'underlying').length;
   const noData = rows.filter(row => row.status === 'no-data').length;
-  const coveredLevels = Math.max(1, rows.length - noData - pending);
+  const coveredLevels = Math.max(1, rows.length - noData);
 
   return {
     levels: rows.length,
     tested,
     retested,
     untested,
-    pending,
+    timeAdjusted,
     noData,
     totalTests: rows.reduce((sum, row) => sum + row.testCount, 0),
     testedRate: ((tested + retested) / coveredLevels) * 100,
@@ -507,7 +555,6 @@ function getLevelStatusLabel(status: LevelTestStatus): string {
   if (status === 'retested') return 'Retested';
   if (status === 'tested') return 'Tested';
   if (status === 'untested') return 'Untested';
-  if (status === 'pending') return 'Pending candles';
   return 'No price data';
 }
 
@@ -515,7 +562,6 @@ function getLevelStatusClasses(status: LevelTestStatus): string {
   if (status === 'retested') return 'bg-blue-500/15 text-blue-300';
   if (status === 'tested') return 'bg-green-500/15 text-green-300';
   if (status === 'untested') return 'bg-amber-500/15 text-amber-300';
-  if (status === 'pending') return 'bg-cyan-500/15 text-cyan-300';
   return 'bg-slate-700 text-slate-300';
 }
 
@@ -523,7 +569,6 @@ function getLevelStatusColor(status: LevelTestStatus): string {
   if (status === 'retested') return BLUE;
   if (status === 'tested') return GREEN;
   if (status === 'untested') return '#f59e0b';
-  if (status === 'pending') return CYAN;
   return '#64748b';
 }
 
@@ -1053,9 +1098,9 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
             <div className="mt-1 text-xs text-slate-500">not touched after first trade</div>
           </div>
           <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
-            <div className="text-xs uppercase tracking-wide text-slate-500">Pending</div>
-            <div className="mt-2 font-mono text-2xl font-bold text-cyan-300">{levelTestSummary.pending.toLocaleString()}</div>
-            <div className="mt-1 text-xs text-slate-500">trade time is after latest candle</div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Time Adjusted</div>
+            <div className="mt-2 font-mono text-2xl font-bold text-cyan-300">{levelTestSummary.timeAdjusted.toLocaleString()}</div>
+            <div className="mt-1 text-xs text-slate-500">anchored by SPX at trade</div>
           </div>
           <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
             <div className="text-xs uppercase tracking-wide text-slate-500">No Data</div>
@@ -1081,6 +1126,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
                     <th className="border-b border-slate-800 px-3 py-2 text-right">Premium</th>
                     <th className="border-b border-slate-800 px-3 py-2 text-right">Net Intent</th>
                     <th className="border-b border-slate-800 px-3 py-2 text-right">First Trade</th>
+                    <th className="border-b border-slate-800 px-3 py-2 text-right">Anchor</th>
                     <th className="border-b border-slate-800 px-3 py-2 text-right">First Test</th>
                     <th className="border-b border-slate-800 px-3 py-2 text-right">Last Test</th>
                     <th className="border-b border-slate-800 px-3 py-2 text-right">Now Gap</th>
@@ -1110,6 +1156,9 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
                       </td>
                       <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
                         {formatDateTime(row.firstTradeMs)}
+                      </td>
+                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
+                        {row.anchorSource === 'underlying' ? 'SPX price' : row.anchorSource === 'time' ? 'Time' : 'N/A'}
                       </td>
                       <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
                         {formatDateTime(row.firstTestMs)}
