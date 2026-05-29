@@ -4,7 +4,7 @@ import { BarChart, HeatmapChart, LineChart } from 'echarts/charts';
 import { GridComponent, LegendComponent, TooltipComponent, VisualMapComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { ECharts, EChartsOption } from 'echarts';
-import { Activity, BarChart3, CheckCircle2, Layers, Repeat2, Target, TrendingUp } from 'lucide-react';
+import { Activity, ArrowUpDown, BarChart3, CheckCircle2, Layers, Repeat2, Target, TrendingUp } from 'lucide-react';
 import type { ChartData } from '../types/chart';
 import type { OptionTrade } from '../types/options';
 import { extractDateKey, formatDateLabel, formatLocalDateKey } from '../utils/dateUtils';
@@ -52,6 +52,8 @@ const HIGH_DELTA_LEVEL_THRESHOLD = 0.6;
 
 type LevelTestStatus = 'retested' | 'tested' | 'untested' | 'no-data';
 type LevelAnchorSource = 'time' | 'underlying' | 'none';
+type LevelTestSortKey = 'tests' | 'premium' | 'netIntent' | 'level' | 'firstTrade' | 'lastTest' | 'nowGap' | 'status';
+type SortDirection = 'asc' | 'desc';
 
 interface LevelTestRow {
   level: number;
@@ -83,6 +85,17 @@ interface LevelTestSummary {
   totalTests: number;
   testedRate: number;
 }
+
+const LEVEL_TEST_SORT_OPTIONS: Array<{ key: LevelTestSortKey; label: string }> = [
+  { key: 'tests', label: 'Tests' },
+  { key: 'premium', label: 'Premium' },
+  { key: 'netIntent', label: 'Net Intent' },
+  { key: 'level', label: 'Level' },
+  { key: 'firstTrade', label: 'First Trade' },
+  { key: 'lastTest', label: 'Last Test' },
+  { key: 'nowGap', label: 'Now Gap' },
+  { key: 'status', label: 'Status' },
+];
 
 echarts.use([
   BarChart,
@@ -572,6 +585,47 @@ function getLevelStatusColor(status: LevelTestStatus): string {
   return '#64748b';
 }
 
+function getLevelStatusRank(status: LevelTestStatus): number {
+  if (status === 'retested') return 3;
+  if (status === 'tested') return 2;
+  if (status === 'untested') return 1;
+  return 0;
+}
+
+function getLevelSortValue(row: LevelTestRow, sortKey: LevelTestSortKey): number {
+  if (sortKey === 'tests') return row.testCount;
+  if (sortKey === 'premium') return row.totalPremium;
+  if (sortKey === 'netIntent') return row.netPremium;
+  if (sortKey === 'level') return row.level;
+  if (sortKey === 'firstTrade') return row.firstTradeMs;
+  if (sortKey === 'lastTest') return row.lastTestMs ?? 0;
+  if (sortKey === 'nowGap') return row.distanceFromCurrent;
+  return getLevelStatusRank(row.status);
+}
+
+function sortLevelTestRows(
+  rows: LevelTestRow[],
+  sortKey: LevelTestSortKey,
+  direction: SortDirection
+): LevelTestRow[] {
+  const directionMultiplier = direction === 'asc' ? 1 : -1;
+
+  return rows.slice().sort((a, b) => {
+    const valueA = getLevelSortValue(a, sortKey);
+    const valueB = getLevelSortValue(b, sortKey);
+
+    if (valueA !== valueB) {
+      return (valueA - valueB) * directionMultiplier;
+    }
+
+    if (a.totalPremium !== b.totalPremium) {
+      return b.totalPremium - a.totalPremium;
+    }
+
+    return a.level - b.level;
+  });
+}
+
 function buildHeatmap(intentTrades: IntentTrade[]) {
   const dates = Array.from(new Set(intentTrades.map(intent => extractDateKey(intent.trade.timestamp)))).sort();
   const hours = Array.from({ length: 24 }, (_, hour) => `${hour.toString().padStart(2, '0')}:00`);
@@ -667,6 +721,8 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
   currentPrice,
   roundFigures,
 }) => {
+  const [levelSortKey, setLevelSortKey] = React.useState<LevelTestSortKey>('tests');
+  const [levelSortDirection, setLevelSortDirection] = React.useState<SortDirection>('desc');
   const intentTrades = React.useMemo(() => toIntentTrades(trades), [trades]);
   const bucketSummaries = React.useMemo(() => createBucketSummaries(intentTrades), [intentTrades]);
   const timeline = React.useMemo(() => buildFlowTimeline(intentTrades), [intentTrades]);
@@ -677,6 +733,10 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
     [currentPrice, intentTrades, roundFigures, stockData]
   );
   const levelTestSummary = React.useMemo(() => summarizeLevelTests(levelTestRows), [levelTestRows]);
+  const sortedLevelTestRows = React.useMemo(
+    () => sortLevelTestRows(levelTestRows, levelSortKey, levelSortDirection),
+    [levelSortDirection, levelSortKey, levelTestRows]
+  );
   const heatmap = React.useMemo(() => buildHeatmap(intentTrades), [intentTrades]);
 
   const overview = React.useMemo(() => {
@@ -877,12 +937,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
   }, [breakevenRows, roundFigures]);
 
   const levelTestOption = React.useMemo<EChartsOption>(() => {
-    const rows = levelTestRows
-      .slice()
-      .sort((a, b) => {
-        if (b.totalPremium !== a.totalPremium) return b.totalPremium - a.totalPremium;
-        return b.testCount - a.testCount;
-      })
+    const rows = sortedLevelTestRows
       .slice(0, 18)
       .reverse();
 
@@ -940,7 +995,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
         },
       ],
     };
-  }, [levelTestRows, roundFigures]);
+  }, [roundFigures, sortedLevelTestRows]);
 
   const heatmapOption = React.useMemo<EChartsOption>(() => ({
     backgroundColor: 'transparent',
@@ -1114,67 +1169,100 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
             No high-delta trades are available in this filter.
           </div>
         ) : (
-          <div className="grid gap-4 xl:grid-cols-[0.95fr_1.35fr]">
-            <EChartPanel option={levelTestOption} height={360} />
-            <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-800">
-              <table className="min-w-full border-separate border-spacing-0 text-sm">
-                <thead className="sticky top-0 z-10 bg-slate-950 text-xs uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="border-b border-slate-800 px-3 py-2 text-left">Level</th>
-                    <th className="border-b border-slate-800 px-3 py-2 text-left">Status</th>
-                    <th className="border-b border-slate-800 px-3 py-2 text-right">Tests</th>
-                    <th className="border-b border-slate-800 px-3 py-2 text-right">Premium</th>
-                    <th className="border-b border-slate-800 px-3 py-2 text-right">Net Intent</th>
-                    <th className="border-b border-slate-800 px-3 py-2 text-right">First Trade</th>
-                    <th className="border-b border-slate-800 px-3 py-2 text-right">Anchor</th>
-                    <th className="border-b border-slate-800 px-3 py-2 text-right">First Test</th>
-                    <th className="border-b border-slate-800 px-3 py-2 text-right">Last Test</th>
-                    <th className="border-b border-slate-800 px-3 py-2 text-right">Now Gap</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {levelTestRows.slice(0, 80).map(row => (
-                    <tr key={row.level} className="hover:bg-slate-900">
-                      <td className="border-b border-slate-800 px-3 py-2">
-                        <div className="font-mono font-semibold text-white">${formatPrice(row.level, roundFigures)}</div>
-                        <div className="mt-0.5 text-xs text-slate-500">
-                          {row.calls}C / {row.puts}P, {row.trades} trades
-                        </div>
-                      </td>
-                      <td className="border-b border-slate-800 px-3 py-2">
-                        <span className={`rounded-md px-2 py-1 text-xs font-semibold ${getLevelStatusClasses(row.status)}`}>
-                          {getLevelStatusLabel(row.status)}
-                        </span>
-                      </td>
-                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-slate-300">
-                        {row.testCount}
-                        {row.retestCount > 0 && <span className="ml-1 text-blue-300">+{row.retestCount}</span>}
-                      </td>
-                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-slate-200">{formatMoney(row.totalPremium)}</td>
-                      <td className={`border-b border-slate-800 px-3 py-2 text-right font-mono ${row.netPremium >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                        {formatMoney(row.netPremium)}
-                      </td>
-                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
-                        {formatDateTime(row.firstTradeMs)}
-                      </td>
-                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
-                        {row.anchorSource === 'underlying' ? 'SPX price' : row.anchorSource === 'time' ? 'Time' : 'N/A'}
-                      </td>
-                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
-                        {formatDateTime(row.firstTestMs)}
-                      </td>
-                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
-                        {formatDateTime(row.lastTestMs)}
-                      </td>
-                      <td className={`border-b border-slate-800 px-3 py-2 text-right font-mono ${row.distanceFromCurrent >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                        {row.distanceFromCurrent >= 0 ? '+' : ''}{row.distanceFromCurrent.toFixed(2)}
-                      </td>
-                    </tr>
+          <>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Sort levels</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap gap-1">
+                  {LEVEL_TEST_SORT_OPTIONS.map(option => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => setLevelSortKey(option.key)}
+                      className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
+                        levelSortKey === option.key
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
                   ))}
-                </tbody>
-              </table>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLevelSortDirection(levelSortDirection === 'desc' ? 'asc' : 'desc')}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-700"
+                  title="Toggle sort direction"
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5" />
+                  {levelSortDirection === 'desc' ? 'High to Low' : 'Low to High'}
+                </button>
+              </div>
             </div>
-          </div>
+
+            <div className="grid gap-4 xl:grid-cols-[0.95fr_1.35fr]">
+              <EChartPanel option={levelTestOption} height={360} />
+              <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-800">
+                <table className="min-w-full border-separate border-spacing-0 text-sm">
+                  <thead className="sticky top-0 z-10 bg-slate-950 text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="border-b border-slate-800 px-3 py-2 text-left">Level</th>
+                      <th className="border-b border-slate-800 px-3 py-2 text-left">Status</th>
+                      <th className="border-b border-slate-800 px-3 py-2 text-right">Tests</th>
+                      <th className="border-b border-slate-800 px-3 py-2 text-right">Premium</th>
+                      <th className="border-b border-slate-800 px-3 py-2 text-right">Net Intent</th>
+                      <th className="border-b border-slate-800 px-3 py-2 text-right">First Trade</th>
+                      <th className="border-b border-slate-800 px-3 py-2 text-right">Anchor</th>
+                      <th className="border-b border-slate-800 px-3 py-2 text-right">First Test</th>
+                      <th className="border-b border-slate-800 px-3 py-2 text-right">Last Test</th>
+                      <th className="border-b border-slate-800 px-3 py-2 text-right">Now Gap</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedLevelTestRows.slice(0, 80).map(row => (
+                      <tr key={row.level} className="hover:bg-slate-900">
+                        <td className="border-b border-slate-800 px-3 py-2">
+                          <div className="font-mono font-semibold text-white">${formatPrice(row.level, roundFigures)}</div>
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            {row.calls}C / {row.puts}P, {row.trades} trades
+                          </div>
+                        </td>
+                        <td className="border-b border-slate-800 px-3 py-2">
+                          <span className={`rounded-md px-2 py-1 text-xs font-semibold ${getLevelStatusClasses(row.status)}`}>
+                            {getLevelStatusLabel(row.status)}
+                          </span>
+                        </td>
+                        <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-slate-300">
+                          {row.testCount}
+                          {row.retestCount > 0 && <span className="ml-1 text-blue-300">+{row.retestCount}</span>}
+                        </td>
+                        <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-slate-200">{formatMoney(row.totalPremium)}</td>
+                        <td className={`border-b border-slate-800 px-3 py-2 text-right font-mono ${row.netPremium >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                          {formatMoney(row.netPremium)}
+                        </td>
+                        <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
+                          {formatDateTime(row.firstTradeMs)}
+                        </td>
+                        <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
+                          {row.anchorSource === 'underlying' ? 'SPX price' : row.anchorSource === 'time' ? 'Time' : 'N/A'}
+                        </td>
+                        <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
+                          {formatDateTime(row.firstTestMs)}
+                        </td>
+                        <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
+                          {formatDateTime(row.lastTestMs)}
+                        </td>
+                        <td className={`border-b border-slate-800 px-3 py-2 text-right font-mono ${row.distanceFromCurrent >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                          {row.distanceFromCurrent >= 0 ? '+' : ''}{row.distanceFromCurrent.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         )}
       </Section>
 
