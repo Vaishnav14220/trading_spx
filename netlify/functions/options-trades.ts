@@ -220,9 +220,23 @@ const createSupabaseClient = () => {
 
 const fetchTrades = async () => {
   const { request } = createSupabaseClient();
-  const rows = await request<Record<string, unknown>[]>(
-    '/option_trades?select=timestamp_text,contract,quantity,price,exchange,bid_ask,delta,iv,underlying_price,option_type,strike,breakeven,abs_delta,is_time_only&order=trade_ts.asc&order=id.asc&limit=50000'
-  );
+  const pageSize = 1000;
+  const rows: Record<string, unknown>[] = [];
+  let offset = 0;
+
+  while (true) {
+    const page = await request<Record<string, unknown>[]>(
+      `/option_trades?select=timestamp_text,contract,quantity,price,exchange,bid_ask,delta,iv,underlying_price,option_type,strike,breakeven,abs_delta,is_time_only&order=trade_ts.asc&order=id.asc&limit=${pageSize}&offset=${offset}`
+    );
+
+    rows.push(...page);
+
+    if (page.length < pageSize) {
+      break;
+    }
+
+    offset += pageSize;
+  }
 
   return rows.map(toClientTrade);
 };
