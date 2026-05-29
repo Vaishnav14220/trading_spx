@@ -9,7 +9,7 @@ import { parseOptionsData } from './services/optionsParser';
 import { appendStoredOptionsTrades, clearStoredOptionsTrades, loadStoredOptionsTrades } from './services/optionsStorage';
 import type { ChartData } from './types/chart';
 import type { ParsedOptionData } from './types/options';
-import { LineChart, RefreshCw, Wifi, WifiOff } from 'lucide-react';
+import { BarChart3, LineChart, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import OptionsTable from './components/OptionsTable';
 import OptionsSummary from './components/OptionsSummary';
 import OptionsInput from './components/OptionsInput';
@@ -36,6 +36,7 @@ const EMPTY_OPTIONS_DATA: ParsedOptionData = {
 };
 const StockChart = React.lazy(() => import('./components/StockChart').then(module => ({ default: module.StockChart })));
 const FlowChart = React.lazy(() => import('./components/FlowChart'));
+const AnalyticsPage = React.lazy(() => import('./components/AnalyticsPage'));
 
 const ChartFallback = () => (
   <div className="flex h-96 items-center justify-center rounded-lg bg-slate-900 text-sm text-slate-400">
@@ -63,6 +64,9 @@ const App: React.FC = () => {
   const futuresFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [optionsData, setOptionsData] = useState<ParsedOptionData>(EMPTY_OPTIONS_DATA);
   const [optionsStorageStatus, setOptionsStorageStatus] = useState('');
+  const [activePage, setActivePage] = useState<'chart' | 'analytics'>(() => (
+    window.location.hash === '#analytics' ? 'analytics' : 'chart'
+  ));
 
   // Extract unique dates from trades
   const tradeDates = React.useMemo(() => {
@@ -120,6 +124,14 @@ const App: React.FC = () => {
       setSelectedDate('all');
       setDateRangeStart('');
       setDateRangeEnd('');
+    }
+  };
+
+  const handlePageChange = (page: 'chart' | 'analytics') => {
+    setActivePage(page);
+    const nextHash = page === 'analytics' ? '#analytics' : '#chart';
+    if (window.location.hash !== nextHash) {
+      window.history.pushState(null, '', nextHash);
     }
   };
 
@@ -244,6 +256,15 @@ const App: React.FC = () => {
     if (!localStorage.getItem('market_spot_epic')) {
       localStorage.setItem('market_spot_epic', DEFAULT_SPOT_EPIC);
     }
+  }, []);
+
+  useEffect(() => {
+    const syncPageFromHash = () => {
+      setActivePage(window.location.hash === '#analytics' ? 'analytics' : 'chart');
+    };
+
+    window.addEventListener('hashchange', syncPageFromHash);
+    return () => window.removeEventListener('hashchange', syncPageFromHash);
   }, []);
 
   useEffect(() => {
@@ -482,7 +503,9 @@ const App: React.FC = () => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <LineChart className="h-8 w-8 text-blue-500" />
-            <h1 className="text-3xl font-bold text-white">S&P 500 Live Chart</h1>
+            <h1 className="text-3xl font-bold text-white">
+              {activePage === 'analytics' ? 'SPX Flow Analytics' : 'S&P 500 Live Chart'}
+            </h1>
             {useRealtime && (
               <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${isConnected ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
                 {isConnected ? (
@@ -500,6 +523,32 @@ const App: React.FC = () => {
             )}
           </div>
           <div className="flex items-center gap-4">
+            <div className="flex rounded-lg border border-slate-700 bg-slate-900 p-1">
+              <button
+                type="button"
+                onClick={() => handlePageChange('chart')}
+                className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  activePage === 'chart'
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                }`}
+              >
+                <LineChart className="h-4 w-4" />
+                Chart
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePageChange('analytics')}
+                className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  activePage === 'analytics'
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                }`}
+              >
+                <BarChart3 className="h-4 w-4" />
+                Analytics
+              </button>
+            </div>
             <CapitalSettings onCredentialsSet={handleCredentialsSet} />
             <DateFilter
               dates={tradeDates}
@@ -572,47 +621,59 @@ const App: React.FC = () => {
           </div>
         )}
 
-        <div className="space-y-6">
-          {filteredTrades.length > 0 && (
-            <Suspense fallback={<ChartFallback />}>
-              <FlowChart trades={filteredTrades} />
-            </Suspense>
-          )}
-
-          <div className="w-full">
-            {loading && !stockData.length ? (
-              <div className="flex flex-col items-center justify-center h-96 rounded-lg" style={{ background: '#131722' }}>
-                <div className="relative">
-                  <div className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
-                </div>
-                <div className="text-white mt-4 text-lg font-medium">Loading historical data...</div>
-                <div className="text-gray-400 mt-2 text-sm">This may take a few moments</div>
-              </div>
-            ) : (
-              stockData.length > 0 && (
-                <Suspense fallback={<ChartFallback />}>
-                  <StockChart
-                    data={stockData}
-                    symbol="SPX"
-                    trades={filteredTrades}
-                    futuresSpread={futuresSpread?.spread || 0}
-                    roundFigures={roundFigures}
-                    historyDays={HISTORICAL_DAYS}
-                  />
-                </Suspense>
-              )
-            )}
-          </div>
-
-          <div className="w-full">
-            <SentimentAnalysis 
-              trades={filteredTrades} 
+        {activePage === 'analytics' ? (
+          <Suspense fallback={<ChartFallback />}>
+            <AnalyticsPage
+              trades={filteredTrades}
+              allTrades={optionsData.trades}
+              stockData={stockData}
               currentPrice={deferredCurrentPrice}
-              futuresSpread={futuresSpread?.spread || 0}
               roundFigures={roundFigures}
             />
+          </Suspense>
+        ) : (
+          <div className="space-y-6">
+            {filteredTrades.length > 0 && (
+              <Suspense fallback={<ChartFallback />}>
+                <FlowChart trades={filteredTrades} />
+              </Suspense>
+            )}
+
+            <div className="w-full">
+              {loading && !stockData.length ? (
+                <div className="flex flex-col items-center justify-center h-96 rounded-lg" style={{ background: '#131722' }}>
+                  <div className="relative">
+                    <div className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+                  </div>
+                  <div className="text-white mt-4 text-lg font-medium">Loading historical data...</div>
+                  <div className="text-gray-400 mt-2 text-sm">This may take a few moments</div>
+                </div>
+              ) : (
+                stockData.length > 0 && (
+                  <Suspense fallback={<ChartFallback />}>
+                    <StockChart
+                      data={stockData}
+                      symbol="SPX"
+                      trades={filteredTrades}
+                      futuresSpread={futuresSpread?.spread || 0}
+                      roundFigures={roundFigures}
+                      historyDays={HISTORICAL_DAYS}
+                    />
+                  </Suspense>
+                )
+              )}
+            </div>
+
+            <div className="w-full">
+              <SentimentAnalysis
+                trades={filteredTrades}
+                currentPrice={deferredCurrentPrice}
+                futuresSpread={futuresSpread?.spread || 0}
+                roundFigures={roundFigures}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="text-sm text-gray-400 text-center">
           {useRealtime && stockData.length > 0 && (
@@ -623,17 +684,19 @@ const App: React.FC = () => {
           Last updated: {lastUpdate.toLocaleTimeString()}
         </div>
 
-        <div className="space-y-6">
-          <div className="bg-slate-900 rounded-lg p-6">
-            <h2 className="text-2xl font-bold text-white mb-4">Process Options Data</h2>
-            <OptionsInput onSubmit={handleOptionsSubmit} />
-          </div>
-          
+        {activePage === 'chart' && (
           <div className="space-y-6">
-            <OptionsSummary summary={optionsData.summary} />
-            <OptionsTable trades={filteredTrades} />
+            <div className="bg-slate-900 rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-white mb-4">Process Options Data</h2>
+              <OptionsInput onSubmit={handleOptionsSubmit} />
+            </div>
+
+            <div className="space-y-6">
+              <OptionsSummary summary={optionsData.summary} />
+              <OptionsTable trades={filteredTrades} />
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
