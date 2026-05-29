@@ -49,6 +49,9 @@ interface ImportBatch {
   id: string;
 }
 
+const DEFAULT_PAGE_SIZE = 1000;
+const MAX_PAGE_SIZE = 1000;
+
 const jsonHeaders = {
   'Content-Type': 'application/json',
 };
@@ -220,27 +223,30 @@ const createSupabaseClient = () => {
   return { request };
 };
 
-const fetchTrades = async () => {
+const clampPageSize = (value: string | undefined): number => {
+  const parsed = Number.parseInt(value ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PAGE_SIZE;
+  return Math.min(parsed, MAX_PAGE_SIZE);
+};
+
+const parseOffset = (value: string | undefined): number => {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+};
+
+const fetchTradePage = async (limit: number, offset: number) => {
   const { request } = createSupabaseClient();
-  const pageSize = 1000;
-  const rows: Record<string, unknown>[] = [];
-  let offset = 0;
+  const rows = await request<Record<string, unknown>[]>(
+    `/option_trades?select=trade_ts,trade_date,timestamp_text,contract,quantity,price,exchange,bid_ask,delta,iv,underlying_price,option_type,strike,breakeven,abs_delta,is_time_only&order=trade_ts.asc&order=id.asc&limit=${limit}&offset=${offset}`
+  );
 
-  while (true) {
-    const page = await request<Record<string, unknown>[]>(
-      `/option_trades?select=trade_ts,trade_date,timestamp_text,contract,quantity,price,exchange,bid_ask,delta,iv,underlying_price,option_type,strike,breakeven,abs_delta,is_time_only&order=trade_ts.asc&order=id.asc&limit=${pageSize}&offset=${offset}`
-    );
+  const hasMore = rows.length === limit;
 
-    rows.push(...page);
-
-    if (page.length < pageSize) {
-      break;
-    }
-
-    offset += pageSize;
-  }
-
-  return rows.map(toClientTrade);
+  return {
+    trades: rows.map(toClientTrade),
+    hasMore,
+    nextOffset: hasMore ? offset + rows.length : null,
+  };
 };
 
 const createImportBatch = async (rawRowCount: number, parsedCount: number): Promise<string> => {
@@ -317,11 +323,18 @@ const clearTrades = async () => {
 export const handler: Handler = async (event) => {
   try {
     if (event.httpMethod === 'GET') {
-      const trades = await fetchTrades();
+      const limit = clampPageSize(event.queryStringParameters?.limit);
+      const offset = parseOffset(event.queryStringParameters?.offset);
+      const page = await fetchTradePage(limit, offset);
+
       return {
         statusCode: 200,
         headers: jsonHeaders,
-        body: JSON.stringify({ trades }),
+        body: JSON.stringify({
+          ...page,
+          limit,
+          offset,
+        }),
       };
     }
 
@@ -333,7 +346,6 @@ export const handler: Handler = async (event) => {
       const insertedCount = await insertTrades(rows);
       const duplicateCount = Math.max(0, rows.length - insertedCount);
       await updateImportBatch(importBatchId, insertedCount, duplicateCount);
-      const trades = await fetchTrades();
 
       return {
         statusCode: 200,
@@ -342,8 +354,6 @@ export const handler: Handler = async (event) => {
           parsedCount: rows.length,
           insertedCount,
           duplicateCount,
-          totalStored: trades.length,
-          trades,
         }),
       };
     }
