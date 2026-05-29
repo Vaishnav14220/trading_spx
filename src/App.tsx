@@ -17,7 +17,7 @@ import SentimentAnalysis from './components/SentimentAnalysis';
 import DateFilter from './components/DateFilter';
 import CapitalSettings from './components/CapitalSettings';
 import ProcessOptionsWidget from './components/ProcessOptionsWidget';
-import { extractDate } from './utils/dateUtils';
+import { extractDateKey } from './utils/dateUtils';
 import { DEFAULT_SPOT_EPIC, getStoredFuturesEpic } from './utils/marketDefaults';
 
 const HISTORICAL_DAYS = 5;
@@ -50,6 +50,8 @@ const App: React.FC = () => {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [currentPrice, setCurrentPrice] = useState<number>(0);
   const [selectedDate, setSelectedDate] = useState<string>('all');
+  const [dateRangeStart, setDateRangeStart] = useState('');
+  const [dateRangeEnd, setDateRangeEnd] = useState('');
   const [showTodayOnly, setShowTodayOnly] = useState(false);
   const [roundFigures, setRoundFigures] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
@@ -64,8 +66,8 @@ const App: React.FC = () => {
 
   // Extract unique dates from trades
   const tradeDates = React.useMemo(() => {
-    const dates = optionsData.trades.map(trade => extractDate(trade.timestamp));
-    return [...new Set(dates)].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    const dates = optionsData.trades.map(trade => extractDateKey(trade.timestamp));
+    return [...new Set(dates)].sort((a, b) => b.localeCompare(a));
   }, [optionsData.trades]);
 
   // Filter trades based on selected date and today filter
@@ -74,15 +76,52 @@ const App: React.FC = () => {
       // Show only trades that had time-only timestamps (no date in original data)
       return optionsData.trades.filter(trade => trade.isTimeOnly === true);
     }
+
+    if (dateRangeStart || dateRangeEnd) {
+      const rangeStart = dateRangeStart && dateRangeEnd && dateRangeStart > dateRangeEnd ? dateRangeEnd : dateRangeStart;
+      const rangeEnd = dateRangeStart && dateRangeEnd && dateRangeStart > dateRangeEnd ? dateRangeStart : dateRangeEnd;
+
+      return optionsData.trades.filter(trade => {
+        const tradeDate = extractDateKey(trade.timestamp);
+        return (!rangeStart || tradeDate >= rangeStart) && (!rangeEnd || tradeDate <= rangeEnd);
+      });
+    }
     
     if (selectedDate === 'all') return optionsData.trades;
     
     return optionsData.trades.filter(trade => {
-      const tradeDate = extractDate(trade.timestamp);
+      const tradeDate = extractDateKey(trade.timestamp);
       return tradeDate === selectedDate;
     });
-  }, [optionsData.trades, selectedDate, showTodayOnly]);
+  }, [dateRangeEnd, dateRangeStart, optionsData.trades, selectedDate, showTodayOnly]);
   const deferredCurrentPrice = React.useDeferredValue(currentPrice);
+
+  const handleDateChange = (date: string) => {
+    setSelectedDate(date);
+    setDateRangeStart('');
+    setDateRangeEnd('');
+    if (date !== 'all') {
+      setShowTodayOnly(false);
+    }
+  };
+
+  const handleDateRangeChange = (start: string, end: string) => {
+    setDateRangeStart(start);
+    setDateRangeEnd(end);
+    if (start || end) {
+      setSelectedDate('all');
+      setShowTodayOnly(false);
+    }
+  };
+
+  const handleTodayFilterChange = (todayOnly: boolean) => {
+    setShowTodayOnly(todayOnly);
+    if (todayOnly) {
+      setSelectedDate('all');
+      setDateRangeStart('');
+      setDateRangeEnd('');
+    }
+  };
 
   const processAndStoreOptionsData = async (data: string) => {
     const parsed = parseOptionsData(data);
@@ -97,6 +136,8 @@ const App: React.FC = () => {
       const saved = await appendStoredOptionsTrades(parsed.trades);
       setOptionsData({ trades: saved.trades, summary: saved.summary });
       setSelectedDate('all');
+      setDateRangeStart('');
+      setDateRangeEnd('');
       setShowTodayOnly(false);
       setOptionsStorageStatus(`Saved ${saved.insertedCount} new trades, skipped ${saved.duplicateCount} duplicates. Total stored: ${saved.totalStored}.`);
       setError('');
@@ -104,6 +145,8 @@ const App: React.FC = () => {
       const message = err instanceof Error ? err.message : 'Unknown database error';
       setOptionsData(parsed);
       setSelectedDate('all');
+      setDateRangeStart('');
+      setDateRangeEnd('');
       setShowTodayOnly(false);
       setOptionsStorageStatus(`Processed locally. Database save failed: ${message}`);
       setError('');
@@ -135,6 +178,8 @@ const App: React.FC = () => {
     }
 
     setSelectedDate('all');
+    setDateRangeStart('');
+    setDateRangeEnd('');
     setShowTodayOnly(false);
   };
 
@@ -459,10 +504,13 @@ const App: React.FC = () => {
             <DateFilter
               dates={tradeDates}
               selectedDate={selectedDate}
+              dateRangeStart={dateRangeStart}
+              dateRangeEnd={dateRangeEnd}
               showTodayOnly={showTodayOnly}
               roundFigures={roundFigures}
-              onDateChange={setSelectedDate}
-              onTodayFilterChange={setShowTodayOnly}
+              onDateChange={handleDateChange}
+              onDateRangeChange={handleDateRangeChange}
+              onTodayFilterChange={handleTodayFilterChange}
               onRoundFiguresChange={setRoundFigures}
             />
             <button
