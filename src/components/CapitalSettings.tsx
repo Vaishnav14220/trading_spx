@@ -13,8 +13,11 @@ export const CapitalSettings: React.FC<CapitalSettingsProps> = ({ onCredentialsS
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [isSaved, setIsSaved] = useState(false);
+  const [usesServerConfig, setUsesServerConfig] = useState(false);
 
   useEffect(() => {
+    const authService = getAuthService();
+
     // Check if credentials are already saved in localStorage
     const savedIdentifier = localStorage.getItem('capital_identifier');
     const savedApiKey = localStorage.getItem('capital_api_key');
@@ -27,12 +30,15 @@ export const CapitalSettings: React.FC<CapitalSettingsProps> = ({ onCredentialsS
       setIsSaved(true);
       
       // Auto-configure auth service
-      const authService = getAuthService();
       authService.setConfig({
         apiKey: savedApiKey,
         identifier: savedIdentifier,
         password: savedPassword,
       });
+      onCredentialsSet();
+    } else if (authService.hasConfig()) {
+      setUsesServerConfig(authService.usesServerConfig());
+      setIsSaved(true);
       onCredentialsSet();
     } else {
       // If no credentials saved, open settings automatically
@@ -90,6 +96,13 @@ export const CapitalSettings: React.FC<CapitalSettingsProps> = ({ onCredentialsS
               </h2>
             </div>
 
+            {usesServerConfig ? (
+              <div className="space-y-4">
+                <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 text-sm text-green-200">
+                  Capital.com credentials are configured in Netlify environment variables.
+                </div>
+              </div>
+            ) : (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -148,21 +161,24 @@ export const CapitalSettings: React.FC<CapitalSettingsProps> = ({ onCredentialsS
                 <p>These credentials are stored locally in your browser and are used to connect to Capital.com's real-time market data API.</p>
               </div>
             </div>
+            )}
 
             <div className="flex gap-3 mt-6">
-              <button
-                onClick={handleSave}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
-              >
-                <Save className="h-4 w-4" />
-                Save & Connect
-              </button>
+              {!usesServerConfig && (
+                <button
+                  onClick={handleSave}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
+                >
+                  <Save className="h-4 w-4" />
+                  Save & Connect
+                </button>
+              )}
               {isSaved && (
                 <button
                   onClick={() => setIsOpen(false)}
-                  className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors"
+                  className={`${usesServerConfig ? 'flex-1' : ''} px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors`}
                 >
-                  Cancel
+                  Close
                 </button>
               )}
             </div>

@@ -177,6 +177,10 @@ export class CapitalAuthService {
     }
     return this.config !== null;
   }
+
+  usesServerConfig(): boolean {
+    return isNetlify;
+  }
 }
 
 // Singleton instance
