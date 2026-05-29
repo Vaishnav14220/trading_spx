@@ -17,6 +17,7 @@ interface PremiumLevelsPageProps {
 type SortKey = 'total' | 'calls' | 'puts' | 'level' | 'distance' | 'trades';
 type SortDirection = 'asc' | 'desc';
 type RowLimit = '25' | '50' | '100' | 'all';
+type MoneynessBucket = 'OTM' | 'ATM' | 'ITM';
 
 interface PremiumLevelRow {
   level: number;
@@ -28,11 +29,41 @@ interface PremiumLevelRow {
   calls: number;
   puts: number;
   quantity: number;
+  weightedAbsDelta: number;
+  deltaPremium: number;
+  bucket: MoneynessBucket;
   distanceFromSpot: number;
 }
 
-const GREEN = '#22c55e';
-const RED = '#ef4444';
+const BUCKET_COLORS: Record<MoneynessBucket, {
+  call: string;
+  put: string;
+  text: string;
+  border: string;
+  background: string;
+}> = {
+  OTM: {
+    call: '#2dd4bf',
+    put: '#f97316',
+    text: 'text-teal-300',
+    border: 'border-teal-500/30',
+    background: 'bg-teal-500/10',
+  },
+  ATM: {
+    call: '#60a5fa',
+    put: '#f59e0b',
+    text: 'text-blue-300',
+    border: 'border-blue-500/30',
+    background: 'bg-blue-500/10',
+  },
+  ITM: {
+    call: '#22c55e',
+    put: '#ef4444',
+    text: 'text-green-300',
+    border: 'border-green-500/30',
+    background: 'bg-green-500/10',
+  },
+};
 const CHART_TEXT = '#cbd5e1';
 const GRID_LINE = 'rgba(148, 163, 184, 0.12)';
 
@@ -71,6 +102,18 @@ function getPremium(trade: OptionTrade): number {
   return trade.price * trade.quantity * 100;
 }
 
+function getAbsDelta(trade: OptionTrade): number {
+  const parsedDelta = Math.abs(Number.parseFloat(String(trade.delta)));
+  if (Number.isFinite(parsedDelta) && parsedDelta > 0) return parsedDelta;
+  return Number.isFinite(trade.absDelta) ? Math.abs(trade.absDelta) : 0;
+}
+
+function classifyBucket(absDelta: number): MoneynessBucket {
+  if (absDelta < 0.4) return 'OTM';
+  if (absDelta > 0.6) return 'ITM';
+  return 'ATM';
+}
+
 function buildPremiumRows(trades: OptionTrade[], currentPrice: number, roundFigures: boolean): PremiumLevelRow[] {
   const rows = new Map<number, PremiumLevelRow>();
 
@@ -87,8 +130,12 @@ function buildPremiumRows(trades: OptionTrade[], currentPrice: number, roundFigu
       calls: 0,
       puts: 0,
       quantity: 0,
+      weightedAbsDelta: 0,
+      deltaPremium: 0,
+      bucket: 'ATM',
       distanceFromSpot: level - currentPrice,
     };
+    const absDelta = getAbsDelta(trade);
 
     if (trade.type === 'C') {
       row.callPremium += premium;
@@ -102,6 +149,9 @@ function buildPremiumRows(trades: OptionTrade[], currentPrice: number, roundFigu
     row.netCallPremium = row.callPremium - row.putPremium;
     row.trades += 1;
     row.quantity += trade.quantity;
+    row.weightedAbsDelta += absDelta * premium;
+    row.deltaPremium += premium;
+    row.bucket = classifyBucket(row.deltaPremium > 0 ? row.weightedAbsDelta / row.deltaPremium : 0);
     row.distanceFromSpot = level - currentPrice;
     rows.set(level, row);
   });
@@ -211,7 +261,6 @@ const PremiumLevelsPage: React.FC<PremiumLevelsPageProps> = ({
 
   const chartOption = React.useMemo<EChartsOption>(() => ({
     backgroundColor: 'transparent',
-    color: [GREEN, RED],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -225,6 +274,7 @@ const PremiumLevelsPage: React.FC<PremiumLevelsPageProps> = ({
           `Total: ${formatMoney(row.totalPremium)}`,
           `Calls: ${formatMoney(row.callPremium)}`,
           `Puts: ${formatMoney(row.putPremium)}`,
+          `Bucket: ${row.bucket} (${(row.deltaPremium > 0 ? row.weightedAbsDelta / row.deltaPremium : 0).toFixed(2)} abs delta)`,
           `Trades: ${row.trades.toLocaleString()}`,
           `Distance: ${row.distanceFromSpot >= 0 ? '+' : ''}${row.distanceFromSpot.toFixed(2)} pts`,
         ].join('<br/>');
@@ -254,17 +304,23 @@ const PremiumLevelsPage: React.FC<PremiumLevelsPageProps> = ({
       : undefined,
     series: [
       {
-        name: 'Calls',
+        name: 'Calls OTM / ATM / ITM',
         type: 'bar',
         stack: 'premium',
-        data: chartRows.map(row => Math.round(row.callPremium)),
+        data: chartRows.map(row => ({
+          value: Math.round(row.callPremium),
+          itemStyle: { color: BUCKET_COLORS[row.bucket].call },
+        })),
         barMaxWidth: 18,
       },
       {
-        name: 'Puts',
+        name: 'Puts OTM / ATM / ITM',
         type: 'bar',
         stack: 'premium',
-        data: chartRows.map(row => Math.round(row.putPremium)),
+        data: chartRows.map(row => ({
+          value: Math.round(row.putPremium),
+          itemStyle: { color: BUCKET_COLORS[row.bucket].put },
+        })),
         barMaxWidth: 18,
       },
     ],
@@ -323,6 +379,16 @@ const PremiumLevelsPage: React.FC<PremiumLevelsPageProps> = ({
             <BarChart3 className="h-5 w-5 text-blue-400" />
             <h2 className="text-lg font-semibold text-white">Premium By Breakeven Level</h2>
           </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            {(['OTM', 'ATM', 'ITM'] as MoneynessBucket[]).map(bucket => (
+              <div key={bucket} className={`rounded-md border px-2 py-1 ${BUCKET_COLORS[bucket].border} ${BUCKET_COLORS[bucket].background}`}>
+                <span className={`font-semibold ${BUCKET_COLORS[bucket].text}`}>{bucket}</span>
+                <span className="ml-1 text-slate-400">
+                  {bucket === 'OTM' ? '< 0.40' : bucket === 'ATM' ? '0.40-0.60' : '> 0.60'}
+                </span>
+              </div>
+            ))}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <select
               value={sortKey}
@@ -366,6 +432,7 @@ const PremiumLevelsPage: React.FC<PremiumLevelsPageProps> = ({
             <thead className="sticky top-0 z-10 bg-slate-950 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="border-b border-slate-800 px-3 py-2 text-left">Level</th>
+                <th className="border-b border-slate-800 px-3 py-2 text-left">Bucket</th>
                 <th className="border-b border-slate-800 px-3 py-2 text-right">Total</th>
                 <th className="border-b border-slate-800 px-3 py-2 text-right">Calls</th>
                 <th className="border-b border-slate-800 px-3 py-2 text-right">Puts</th>
@@ -377,12 +444,26 @@ const PremiumLevelsPage: React.FC<PremiumLevelsPageProps> = ({
             </thead>
             <tbody>
               {displayedRows.map(row => (
-                <tr key={row.level} className="hover:bg-slate-900">
+                <tr key={row.level} className={`hover:bg-slate-900 ${
+                  row.bucket === 'OTM'
+                    ? 'bg-teal-500/[0.03]'
+                    : row.bucket === 'ATM'
+                    ? 'bg-blue-500/[0.03]'
+                    : 'bg-green-500/[0.03]'
+                }`}>
                   <td className="border-b border-slate-800 px-3 py-2">
                     <div className="font-mono font-semibold text-white">${formatPrice(row.level, roundFigures)}</div>
                     {futuresSpread > 0 && (
                       <div className="mt-0.5 text-xs text-blue-300">ES ${formatPrice(row.level + futuresSpread, roundFigures)}</div>
                     )}
+                  </td>
+                  <td className="border-b border-slate-800 px-3 py-2">
+                    <span className={`rounded-md border px-2 py-1 text-xs font-semibold ${BUCKET_COLORS[row.bucket].border} ${BUCKET_COLORS[row.bucket].background} ${BUCKET_COLORS[row.bucket].text}`}>
+                      {row.bucket}
+                    </span>
+                    <div className="mt-1 font-mono text-xs text-slate-500">
+                      Î” {(row.deltaPremium > 0 ? row.weightedAbsDelta / row.deltaPremium : 0).toFixed(2)}
+                    </div>
                   </td>
                   <td className="border-b border-slate-800 px-3 py-2 text-right font-mono font-semibold text-slate-100">{formatMoney(row.totalPremium)}</td>
                   <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-green-300">{formatMoney(row.callPremium)}</td>
