@@ -41,6 +41,10 @@ interface BucketSummary {
   netPremium: number;
 }
 
+interface DailyBucketRow extends BucketSummary {
+  dateKey: string;
+}
+
 const BUCKETS: IntentBucket[] = ['OTM Sold Flow', 'ATM Mixed Flow', 'ITM Bought Flow'];
 const CHART_TEXT = '#cbd5e1';
 const GRID_LINE = 'rgba(148, 163, 184, 0.12)';
@@ -119,6 +123,22 @@ function formatMoney(value: number): string {
 
 function formatPrice(value: number, roundFigures: boolean): string {
   return roundFigures ? value.toFixed(0) : value.toFixed(2);
+}
+
+function formatShortDateLabel(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  if (!year || !month || !day) return dateKey;
+
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+  });
+}
+
+function formatBucketShortLabel(bucket: IntentBucket): string {
+  if (bucket === 'OTM Sold Flow') return 'OTM';
+  if (bucket === 'ATM Mixed Flow') return 'ATM';
+  return 'ITM';
 }
 
 function parseTradeTimeMs(trade: OptionTrade): number | null {
@@ -223,6 +243,40 @@ function createBucketSummaries(intentTrades: IntentTrade[]): BucketSummary[] {
   });
 
   return BUCKETS.map(bucket => summaries.get(bucket)!);
+}
+
+function buildDailyBucketRows(intentTrades: IntentTrade[]): DailyBucketRow[] {
+  const rows = new Map<string, DailyBucketRow>();
+
+  intentTrades.forEach(intent => {
+    const dateKey = extractDateKey(intent.trade.timestampIso || intent.trade.timestamp);
+    const key = `${dateKey}|${intent.bucket}`;
+    const row = rows.get(key) ?? {
+      dateKey,
+      bucket: intent.bucket,
+      trades: 0,
+      bullishPremium: 0,
+      bearishPremium: 0,
+      totalPremium: 0,
+      netPremium: 0,
+    };
+
+    row.trades += 1;
+    row.totalPremium += intent.premium;
+    if (intent.signedPremium >= 0) {
+      row.bullishPremium += Math.abs(intent.signedPremium);
+    } else {
+      row.bearishPremium += Math.abs(intent.signedPremium);
+    }
+    row.netPremium = row.bullishPremium - row.bearishPremium;
+    rows.set(key, row);
+  });
+
+  return Array.from(rows.values())
+    .sort((a, b) => {
+      if (a.dateKey !== b.dateKey) return b.dateKey.localeCompare(a.dateKey);
+      return BUCKETS.indexOf(a.bucket) - BUCKETS.indexOf(b.bucket);
+    });
 }
 
 function formatTimeBucket(timeMs: number): string {
@@ -725,6 +779,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
   const [levelSortDirection, setLevelSortDirection] = React.useState<SortDirection>('desc');
   const intentTrades = React.useMemo(() => toIntentTrades(trades), [trades]);
   const bucketSummaries = React.useMemo(() => createBucketSummaries(intentTrades), [intentTrades]);
+  const dailyBucketRows = React.useMemo(() => buildDailyBucketRows(intentTrades), [intentTrades]);
   const timeline = React.useMemo(() => buildFlowTimeline(intentTrades), [intentTrades]);
   const outcomeStats = React.useMemo(() => buildOutcomeStats(intentTrades, stockData), [intentTrades, stockData]);
   const breakevenRows = React.useMemo(() => buildBreakevenRows(intentTrades, roundFigures), [intentTrades, roundFigures]);
@@ -849,6 +904,69 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
       },
     ],
   }), [bucketSummaries]);
+
+  const dailyBucketOption = React.useMemo<EChartsOption>(() => {
+    const rows = dailyBucketRows
+      .slice()
+      .sort((a, b) => {
+        if (a.dateKey !== b.dateKey) return a.dateKey.localeCompare(b.dateKey);
+        return BUCKETS.indexOf(a.bucket) - BUCKETS.indexOf(b.bucket);
+      });
+
+    return {
+      backgroundColor: 'transparent',
+      color: [GREEN, RED],
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: params => {
+          const item = Array.isArray(params) ? params[0] : params;
+          const row = rows[item.dataIndex];
+          if (!row) return '';
+
+          return [
+            `${formatDateLabel(row.dateKey)} - ${row.bucket}`,
+            `Bullish: ${formatMoney(row.bullishPremium)}`,
+            `Bearish: ${formatMoney(row.bearishPremium)}`,
+            `Net: ${formatMoney(row.netPremium)}`,
+            `Trades: ${row.trades.toLocaleString()}`,
+          ].join('<br/>');
+        },
+      },
+      legend: {
+        top: 0,
+        textStyle: { color: CHART_TEXT },
+      },
+      grid: { left: 112, right: 28, top: 46, bottom: 34 },
+      xAxis: {
+        type: 'value',
+        axisLabel: { color: CHART_TEXT, formatter: value => formatMoney(Number(value)) },
+        splitLine: { lineStyle: { color: GRID_LINE } },
+      },
+      yAxis: {
+        type: 'category',
+        data: rows.map(row => `${formatShortDateLabel(row.dateKey)}  ${formatBucketShortLabel(row.bucket)}`),
+        axisLabel: { color: CHART_TEXT },
+        axisLine: { lineStyle: { color: GRID_LINE } },
+      },
+      series: [
+        {
+          name: 'Bullish',
+          type: 'bar',
+          stack: 'daily-flow',
+          data: rows.map(row => Math.round(row.bullishPremium)),
+          barMaxWidth: 16,
+        },
+        {
+          name: 'Bearish',
+          type: 'bar',
+          stack: 'daily-flow',
+          data: rows.map(row => -Math.round(row.bearishPremium)),
+          barMaxWidth: 16,
+        },
+      ],
+    };
+  }, [dailyBucketRows]);
 
   const outcomeOption = React.useMemo<EChartsOption>(() => ({
     backgroundColor: 'transparent',
@@ -1301,6 +1419,43 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
           </div>
         </Section>
       </div>
+
+      <Section title="Daily Delta Bucket Sentiment" icon={<Layers className="h-5 w-5" />}>
+        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <EChartPanel option={dailyBucketOption} height={Math.min(520, Math.max(300, dailyBucketRows.length * 32 + 80))} />
+          <div className="max-h-[520px] overflow-auto rounded-lg border border-slate-800">
+            <table className="min-w-full border-separate border-spacing-0 text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-950 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="border-b border-slate-800 px-3 py-2 text-left">Date</th>
+                  <th className="border-b border-slate-800 px-3 py-2 text-left">Bucket</th>
+                  <th className="border-b border-slate-800 px-3 py-2 text-right">Trades</th>
+                  <th className="border-b border-slate-800 px-3 py-2 text-right">Bullish</th>
+                  <th className="border-b border-slate-800 px-3 py-2 text-right">Bearish</th>
+                  <th className="border-b border-slate-800 px-3 py-2 text-right">Net</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dailyBucketRows.map(row => (
+                  <tr key={`${row.dateKey}-${row.bucket}`} className="hover:bg-slate-900">
+                    <td className="border-b border-slate-800 px-3 py-2 text-slate-200">{formatDateLabel(row.dateKey)}</td>
+                    <td className="border-b border-slate-800 px-3 py-2">
+                      <div className="font-semibold text-white">{row.bucket}</div>
+                      <div className="mt-0.5 text-xs text-slate-500">{formatBucketShortLabel(row.bucket)}</div>
+                    </td>
+                    <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-slate-300">{row.trades.toLocaleString()}</td>
+                    <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-green-300">{formatMoney(row.bullishPremium)}</td>
+                    <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-red-300">{formatMoney(row.bearishPremium)}</td>
+                    <td className={`border-b border-slate-800 px-3 py-2 text-right font-mono ${row.netPremium >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                      {formatMoney(row.netPremium)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Section>
 
       <div className="grid gap-6 xl:grid-cols-[1fr_1.15fr]">
         <Section title="Breakeven Strength" icon={<Target className="h-5 w-5" />}>
