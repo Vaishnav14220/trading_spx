@@ -4,7 +4,7 @@ import { BarChart, HeatmapChart, LineChart } from 'echarts/charts';
 import { GridComponent, LegendComponent, TooltipComponent, VisualMapComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { ECharts, EChartsOption } from 'echarts';
-import { Activity, BarChart3, Layers, Target, TrendingUp } from 'lucide-react';
+import { Activity, BarChart3, CheckCircle2, Layers, Repeat2, Target, TrendingUp } from 'lucide-react';
 import type { ChartData } from '../types/chart';
 import type { OptionTrade } from '../types/options';
 import { extractDateKey, formatDateLabel } from '../utils/dateUtils';
@@ -48,6 +48,36 @@ const GREEN = '#22c55e';
 const RED = '#ef4444';
 const BLUE = '#3b82f6';
 const CYAN = '#14b8a6';
+const HIGH_DELTA_LEVEL_THRESHOLD = 0.6;
+
+type LevelTestStatus = 'retested' | 'tested' | 'untested' | 'no-data';
+
+interface LevelTestRow {
+  level: number;
+  trades: number;
+  calls: number;
+  puts: number;
+  totalPremium: number;
+  netPremium: number;
+  firstTradeMs: number;
+  lastTradeMs: number;
+  testCount: number;
+  retestCount: number;
+  firstTestMs: number | null;
+  lastTestMs: number | null;
+  status: LevelTestStatus;
+  distanceFromCurrent: number;
+}
+
+interface LevelTestSummary {
+  levels: number;
+  tested: number;
+  retested: number;
+  untested: number;
+  noData: number;
+  totalTests: number;
+  testedRate: number;
+}
 
 echarts.use([
   BarChart,
@@ -179,6 +209,18 @@ function createBucketSummaries(intentTrades: IntentTrade[]): BucketSummary[] {
 
 function formatTimeBucket(timeMs: number): string {
   return new Date(timeMs).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatDateTime(timeMs: number | null): string {
+  if (timeMs === null) return 'N/A';
+
+  return new Date(timeMs).toLocaleString(undefined, {
+    month: 'short',
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
@@ -330,6 +372,148 @@ function buildBreakevenRows(intentTrades: IntentTrade[], roundFigures: boolean) 
     .sort((a, b) => b.totalPremium - a.totalPremium);
 }
 
+function findCandleIndexAtOrAfter(stockData: ChartData[], targetMs: number): number {
+  let left = 0;
+  let right = stockData.length - 1;
+  let matchIndex = -1;
+
+  while (left <= right) {
+    const mid = Math.floor((left + right) / 2);
+    const timeMs = stockData[mid].time * 1000;
+
+    if (timeMs >= targetMs) {
+      matchIndex = mid;
+      right = mid - 1;
+    } else {
+      left = mid + 1;
+    }
+  }
+
+  return matchIndex;
+}
+
+function buildLevelTestRows(
+  intentTrades: IntentTrade[],
+  stockData: ChartData[],
+  roundFigures: boolean,
+  currentPrice: number
+): LevelTestRow[] {
+  const groups = new Map<number, Omit<LevelTestRow, 'testCount' | 'retestCount' | 'firstTestMs' | 'lastTestMs' | 'status' | 'distanceFromCurrent'>>();
+
+  intentTrades
+    .filter(intent => intent.absDelta > HIGH_DELTA_LEVEL_THRESHOLD)
+    .forEach(intent => {
+      const level = roundFigures ? Math.round(intent.trade.breakeven) : Number(intent.trade.breakeven.toFixed(2));
+      const row = groups.get(level) ?? {
+        level,
+        trades: 0,
+        calls: 0,
+        puts: 0,
+        totalPremium: 0,
+        netPremium: 0,
+        firstTradeMs: intent.timeMs,
+        lastTradeMs: intent.timeMs,
+      };
+
+      row.trades += 1;
+      row.calls += intent.trade.type === 'C' ? 1 : 0;
+      row.puts += intent.trade.type === 'P' ? 1 : 0;
+      row.totalPremium += intent.premium;
+      row.netPremium += intent.signedPremium;
+      row.firstTradeMs = Math.min(row.firstTradeMs, intent.timeMs);
+      row.lastTradeMs = Math.max(row.lastTradeMs, intent.timeMs);
+      groups.set(level, row);
+    });
+
+  const sortedCandles = stockData.slice().sort((a, b) => a.time - b.time);
+
+  return Array.from(groups.values())
+    .map(row => {
+      const startIndex = findCandleIndexAtOrAfter(sortedCandles, row.firstTradeMs);
+      let testCount = 0;
+      let firstTestMs: number | null = null;
+      let lastTestMs: number | null = null;
+      let wasTouching = false;
+
+      if (startIndex >= 0) {
+        for (let index = startIndex; index < sortedCandles.length; index += 1) {
+          const candle = sortedCandles[index];
+          const touched = candle.high >= row.level && candle.low <= row.level;
+
+          if (touched && !wasTouching) {
+            const testTimeMs = candle.time * 1000;
+            testCount += 1;
+            firstTestMs ??= testTimeMs;
+            lastTestMs = testTimeMs;
+          }
+
+          wasTouching = touched;
+        }
+      }
+
+      const status: LevelTestStatus = startIndex < 0
+        ? 'no-data'
+        : testCount === 0
+        ? 'untested'
+        : testCount === 1
+        ? 'tested'
+        : 'retested';
+
+      return {
+        ...row,
+        testCount,
+        retestCount: Math.max(0, testCount - 1),
+        firstTestMs,
+        lastTestMs,
+        status,
+        distanceFromCurrent: row.level - currentPrice,
+      };
+    })
+    .sort((a, b) => {
+      if (b.testCount !== a.testCount) return b.testCount - a.testCount;
+      return b.totalPremium - a.totalPremium;
+    });
+}
+
+function summarizeLevelTests(rows: LevelTestRow[]): LevelTestSummary {
+  const tested = rows.filter(row => row.status === 'tested').length;
+  const retested = rows.filter(row => row.status === 'retested').length;
+  const untested = rows.filter(row => row.status === 'untested').length;
+  const noData = rows.filter(row => row.status === 'no-data').length;
+  const coveredLevels = Math.max(1, rows.length - noData);
+
+  return {
+    levels: rows.length,
+    tested,
+    retested,
+    untested,
+    noData,
+    totalTests: rows.reduce((sum, row) => sum + row.testCount, 0),
+    testedRate: ((tested + retested) / coveredLevels) * 100,
+  };
+}
+
+function getLevelStatusLabel(status: LevelTestStatus): string {
+  if (status === 'retested') return 'Retested';
+  if (status === 'tested') return 'Tested';
+  if (status === 'untested') return 'Untested';
+  return 'No price data';
+}
+
+function getLevelStatusClasses(status: LevelTestStatus): string {
+  if (status === 'retested') return 'bg-blue-500/15 text-blue-300';
+  if (status === 'tested') return 'bg-green-500/15 text-green-300';
+  if (status === 'untested') return 'bg-amber-500/15 text-amber-300';
+  return 'bg-slate-700 text-slate-300';
+}
+
+function getLevelStatusColor(status: LevelTestStatus): string {
+  if (status === 'retested') return BLUE;
+  if (status === 'tested') return GREEN;
+  if (status === 'untested') return '#f59e0b';
+  return '#64748b';
+}
+
 function buildHeatmap(intentTrades: IntentTrade[]) {
   const dates = Array.from(new Set(intentTrades.map(intent => extractDateKey(intent.trade.timestamp)))).sort();
   const hours = Array.from({ length: 24 }, (_, hour) => `${hour.toString().padStart(2, '0')}:00`);
@@ -430,6 +614,11 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
   const timeline = React.useMemo(() => buildFlowTimeline(intentTrades), [intentTrades]);
   const outcomeStats = React.useMemo(() => buildOutcomeStats(intentTrades, stockData), [intentTrades, stockData]);
   const breakevenRows = React.useMemo(() => buildBreakevenRows(intentTrades, roundFigures), [intentTrades, roundFigures]);
+  const levelTestRows = React.useMemo(
+    () => buildLevelTestRows(intentTrades, stockData, roundFigures, currentPrice),
+    [currentPrice, intentTrades, roundFigures, stockData]
+  );
+  const levelTestSummary = React.useMemo(() => summarizeLevelTests(levelTestRows), [levelTestRows]);
   const heatmap = React.useMemo(() => buildHeatmap(intentTrades), [intentTrades]);
 
   const overview = React.useMemo(() => {
@@ -629,6 +818,72 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
     };
   }, [breakevenRows, roundFigures]);
 
+  const levelTestOption = React.useMemo<EChartsOption>(() => {
+    const rows = levelTestRows
+      .slice()
+      .sort((a, b) => {
+        if (b.totalPremium !== a.totalPremium) return b.totalPremium - a.totalPremium;
+        return b.testCount - a.testCount;
+      })
+      .slice(0, 18)
+      .reverse();
+
+    return {
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: params => {
+          const item = Array.isArray(params) ? params[0] : params;
+          const row = rows[item.dataIndex];
+          if (!row) return '';
+
+          return [
+            `$${formatPrice(row.level, roundFigures)}`,
+            `Status: ${getLevelStatusLabel(row.status)}`,
+            `Tests: ${row.testCount}`,
+            `Retests: ${row.retestCount}`,
+            `Premium: ${formatMoney(row.totalPremium)}`,
+            `Net intent: ${formatMoney(row.netPremium)}`,
+          ].join('<br/>');
+        },
+      },
+      grid: { left: 82, right: 28, top: 20, bottom: 28 },
+      xAxis: {
+        type: 'value',
+        minInterval: 1,
+        axisLabel: { color: CHART_TEXT },
+        splitLine: { lineStyle: { color: GRID_LINE } },
+      },
+      yAxis: {
+        type: 'category',
+        data: rows.map(row => `$${formatPrice(row.level, roundFigures)}`),
+        axisLabel: { color: CHART_TEXT },
+        axisLine: { lineStyle: { color: GRID_LINE } },
+      },
+      series: [
+        {
+          name: 'Level tests',
+          type: 'bar',
+          data: rows.map(row => ({
+            value: row.testCount,
+            itemStyle: { color: getLevelStatusColor(row.status) },
+          })),
+          label: {
+            show: true,
+            position: 'right',
+            color: CHART_TEXT,
+            formatter: params => {
+              const row = rows[params.dataIndex];
+              return row ? getLevelStatusLabel(row.status) : '';
+            },
+          },
+          barMaxWidth: 18,
+        },
+      ],
+    };
+  }, [levelTestRows, roundFigures]);
+
   const heatmapOption = React.useMemo<EChartsOption>(() => ({
     backgroundColor: 'transparent',
     tooltip: {
@@ -749,6 +1004,108 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
           detail={`current SPX $${formatPrice(currentPrice, roundFigures)}`}
         />
       </div>
+
+      <Section title={`High-Delta Level Tests (abs delta > ${HIGH_DELTA_LEVEL_THRESHOLD.toFixed(2)})`} icon={<Target className="h-5 w-5" />}>
+        <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
+              <Target className="h-4 w-4 text-slate-400" />
+              Levels
+            </div>
+            <div className="mt-2 font-mono text-2xl font-bold text-white">{levelTestSummary.levels.toLocaleString()}</div>
+            <div className="mt-1 text-xs text-slate-500">unique high-delta BEs</div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
+              <CheckCircle2 className="h-4 w-4 text-green-300" />
+              Tested
+            </div>
+            <div className="mt-2 font-mono text-2xl font-bold text-green-300">{levelTestSummary.tested.toLocaleString()}</div>
+            <div className="mt-1 text-xs text-slate-500">{levelTestSummary.testedRate.toFixed(0)}% touched at least once</div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
+              <Repeat2 className="h-4 w-4 text-blue-300" />
+              Retested
+            </div>
+            <div className="mt-2 font-mono text-2xl font-bold text-blue-300">{levelTestSummary.retested.toLocaleString()}</div>
+            <div className="mt-1 text-xs text-slate-500">{levelTestSummary.totalTests.toLocaleString()} total test events</div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
+              <Target className="h-4 w-4 text-amber-300" />
+              Untested
+            </div>
+            <div className="mt-2 font-mono text-2xl font-bold text-amber-300">{levelTestSummary.untested.toLocaleString()}</div>
+            <div className="mt-1 text-xs text-slate-500">not touched after first trade</div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+            <div className="text-xs uppercase tracking-wide text-slate-500">No Data</div>
+            <div className="mt-2 font-mono text-2xl font-bold text-slate-300">{levelTestSummary.noData.toLocaleString()}</div>
+            <div className="mt-1 text-xs text-slate-500">outside loaded price history</div>
+          </div>
+        </div>
+
+        {levelTestRows.length === 0 ? (
+          <div className="rounded-lg border border-slate-800 bg-slate-900 p-6 text-sm text-slate-400">
+            No high-delta trades are available in this filter.
+          </div>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[0.95fr_1.35fr]">
+            <EChartPanel option={levelTestOption} height={360} />
+            <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-800">
+              <table className="min-w-full border-separate border-spacing-0 text-sm">
+                <thead className="sticky top-0 z-10 bg-slate-950 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="border-b border-slate-800 px-3 py-2 text-left">Level</th>
+                    <th className="border-b border-slate-800 px-3 py-2 text-left">Status</th>
+                    <th className="border-b border-slate-800 px-3 py-2 text-right">Tests</th>
+                    <th className="border-b border-slate-800 px-3 py-2 text-right">Premium</th>
+                    <th className="border-b border-slate-800 px-3 py-2 text-right">Net Intent</th>
+                    <th className="border-b border-slate-800 px-3 py-2 text-right">First Test</th>
+                    <th className="border-b border-slate-800 px-3 py-2 text-right">Last Test</th>
+                    <th className="border-b border-slate-800 px-3 py-2 text-right">Now Gap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {levelTestRows.slice(0, 80).map(row => (
+                    <tr key={row.level} className="hover:bg-slate-900">
+                      <td className="border-b border-slate-800 px-3 py-2">
+                        <div className="font-mono font-semibold text-white">${formatPrice(row.level, roundFigures)}</div>
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          {row.calls}C / {row.puts}P, {row.trades} trades
+                        </div>
+                      </td>
+                      <td className="border-b border-slate-800 px-3 py-2">
+                        <span className={`rounded-md px-2 py-1 text-xs font-semibold ${getLevelStatusClasses(row.status)}`}>
+                          {getLevelStatusLabel(row.status)}
+                        </span>
+                      </td>
+                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-slate-300">
+                        {row.testCount}
+                        {row.retestCount > 0 && <span className="ml-1 text-blue-300">+{row.retestCount}</span>}
+                      </td>
+                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-slate-200">{formatMoney(row.totalPremium)}</td>
+                      <td className={`border-b border-slate-800 px-3 py-2 text-right font-mono ${row.netPremium >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                        {formatMoney(row.netPremium)}
+                      </td>
+                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
+                        {formatDateTime(row.firstTestMs)}
+                      </td>
+                      <td className="border-b border-slate-800 px-3 py-2 text-right font-mono text-xs text-slate-400">
+                        {formatDateTime(row.lastTestMs)}
+                      </td>
+                      <td className={`border-b border-slate-800 px-3 py-2 text-right font-mono ${row.distanceFromCurrent >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                        {row.distanceFromCurrent >= 0 ? '+' : ''}{row.distanceFromCurrent.toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Section>
 
       <Section title="Flow Score Timeline" icon={<Activity className="h-5 w-5" />}>
         <EChartPanel option={flowOption} height={360} />
