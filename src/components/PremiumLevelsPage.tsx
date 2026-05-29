@@ -43,18 +43,18 @@ const BUCKET_COLORS: Record<MoneynessBucket, {
   background: string;
 }> = {
   OTM: {
-    call: '#2dd4bf',
-    put: '#f97316',
-    text: 'text-teal-300',
-    border: 'border-teal-500/30',
-    background: 'bg-teal-500/10',
+    call: '#38bdf8',
+    put: '#e879f9',
+    text: 'text-sky-300',
+    border: 'border-sky-500/30',
+    background: 'bg-sky-500/10',
   },
   ATM: {
-    call: '#60a5fa',
-    put: '#f59e0b',
-    text: 'text-blue-300',
-    border: 'border-blue-500/30',
-    background: 'bg-blue-500/10',
+    call: '#fde047',
+    put: '#fb923c',
+    text: 'text-yellow-300',
+    border: 'border-yellow-500/30',
+    background: 'bg-yellow-500/10',
   },
   ITM: {
     call: '#22c55e',
@@ -75,6 +75,8 @@ const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
   { key: 'distance', label: 'Distance' },
   { key: 'trades', label: 'Trades' },
 ];
+
+const BUCKETS: MoneynessBucket[] = ['OTM', 'ATM', 'ITM'];
 
 echarts.use([
   BarChart,
@@ -302,28 +304,26 @@ const PremiumLevelsPage: React.FC<PremiumLevelsPageProps> = ({
           { type: 'slider', yAxisIndex: 0, right: 2, width: 14, textStyle: { color: CHART_TEXT } },
         ]
       : undefined,
-    series: [
+    series: BUCKETS.flatMap(bucket => [
       {
-        name: 'Calls OTM / ATM / ITM',
+        name: `${bucket} Calls`,
         type: 'bar',
         stack: 'premium',
-        data: chartRows.map(row => ({
-          value: Math.round(row.callPremium),
-          itemStyle: { color: BUCKET_COLORS[row.bucket].call },
-        })),
+        data: chartRows.map(row => row.bucket === bucket ? Math.round(row.callPremium) : 0),
+        itemStyle: { color: BUCKET_COLORS[bucket].call },
+        emphasis: { focus: 'series' },
         barMaxWidth: 18,
       },
       {
-        name: 'Puts OTM / ATM / ITM',
+        name: `${bucket} Puts`,
         type: 'bar',
         stack: 'premium',
-        data: chartRows.map(row => ({
-          value: Math.round(row.putPremium),
-          itemStyle: { color: BUCKET_COLORS[row.bucket].put },
-        })),
+        data: chartRows.map(row => row.bucket === bucket ? Math.round(row.putPremium) : 0),
+        itemStyle: { color: BUCKET_COLORS[bucket].put },
+        emphasis: { focus: 'series' },
         barMaxWidth: 18,
       },
-    ],
+    ]),
   }), [chartRows, roundFigures]);
 
   if (trades.length === 0) {
@@ -380,7 +380,7 @@ const PremiumLevelsPage: React.FC<PremiumLevelsPageProps> = ({
             <h2 className="text-lg font-semibold text-white">Premium By Breakeven Level</h2>
           </div>
           <div className="flex flex-wrap gap-2 text-xs">
-            {(['OTM', 'ATM', 'ITM'] as MoneynessBucket[]).map(bucket => (
+            {BUCKETS.map(bucket => (
               <div key={bucket} className={`rounded-md border px-2 py-1 ${BUCKET_COLORS[bucket].border} ${BUCKET_COLORS[bucket].background}`}>
                 <span className={`font-semibold ${BUCKET_COLORS[bucket].text}`}>{bucket}</span>
                 <span className="ml-1 text-slate-400">
